@@ -183,6 +183,14 @@ class ImageCanvas(QLabel):
             scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.setPixmap(scaled)
 
+    def clear_overlays(self) -> None:
+        if self._base_pixmap:
+            self._annotated_pixmap = self._base_pixmap
+            self._update_scaled()
+        else:
+            self._annotated_pixmap = None
+            self.clear()
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -305,10 +313,7 @@ class MainWindow(QMainWindow):
             return
         self.current_image = Path(file_path)
         self.image_canvas.set_image(pixmap)
-        self.current_regions = []
-        self.ocr_text.clear()
-        self.translation_text.clear()
-        self.translate_btn.setEnabled(False)
+        self._reset_ocr_outputs()
 
     def run_ocr(self) -> None:
         if not self.current_image:
@@ -319,6 +324,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Lingua documento", "Scegli o inserisci la lingua del documento")
             return
         print("[GUI] run_ocr invoked", flush=True)
+        self._reset_ocr_outputs()
         self._start_task(
             perform_ocr_task,
             self.current_image,
@@ -364,6 +370,13 @@ class MainWindow(QMainWindow):
         self.translation_text.setPlainText(payload.combined_text)
         if self.current_regions:
             self.image_canvas.show_regions(self.current_regions, payload.overlay_texts)
+
+    def _reset_ocr_outputs(self) -> None:
+        self.current_regions = []
+        self.ocr_text.clear()
+        self.translation_text.clear()
+        self.translate_btn.setEnabled(False)
+        self.image_canvas.clear_overlays()
 
     def _start_task(self, fn, *args, on_success, busy_message: str) -> None:
         print(f"[GUI] Scheduling task: {fn.__name__}", flush=True)
