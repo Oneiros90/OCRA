@@ -13,7 +13,7 @@ from typing import Callable, List, Sequence
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from PySide6.QtCore import QObject, QPointF, QSize, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QPolygonF, QCloseEvent
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF, QCloseEvent
 from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
@@ -142,6 +142,7 @@ class ImageCanvas(QLabel):
         self._base_pixmap: QPixmap | None = None
         self._annotated_pixmap: QPixmap | None = None
         self._font_size = 18
+        self._font_family = "Noto Sans"
         self._zoom = 1.0
         self._min_zoom = 0.25
         self._max_zoom = 4.0
@@ -159,8 +160,6 @@ class ImageCanvas(QLabel):
         pixmap = self._base_pixmap.copy()
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        font = QFont("Noto Sans", self._font_size)
-        painter.setFont(font)
         for idx, region in enumerate(regions):
             if overlay_texts is not None and idx < len(overlay_texts):
                 text = overlay_texts[idx]
@@ -173,6 +172,8 @@ class ImageCanvas(QLabel):
             painter.setBrush(QColor(30, 136, 229, 90))
             painter.drawPolygon(polygon)
             painter.setPen(Qt.white)
+            fitted_font = self._font_for_rect(polygon.boundingRect(), text)
+            painter.setFont(fitted_font)
             painter.drawText(
                 polygon.boundingRect(),
                 Qt.AlignCenter | Qt.TextWordWrap,
@@ -237,6 +238,26 @@ class ImageCanvas(QLabel):
         else:
             self._annotated_pixmap = None
             self.clear()
+
+    def _font_for_rect(self, rect, text: str) -> QFont:
+        min_size = 6
+        max_dim = max(rect.width(), rect.height(), 1.0)
+        max_size = int(max(min_size, min(self._font_size * 2, max_dim)))
+        flags = Qt.AlignCenter | Qt.TextWordWrap
+        selected = min_size
+        low, high = min_size, max_size
+        while low <= high:
+            mid = (low + high) // 2
+            font = QFont(self._font_family, mid)
+            metrics = QFontMetrics(font)
+            bounds = metrics.boundingRect(rect.toRect(), flags, text)
+            if bounds.width() <= rect.width() * 0.95 and bounds.height() <= rect.height() * 0.95:
+                selected = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        font = QFont(self._font_family, selected)
+        return font
 
 
 class MainWindow(QMainWindow):
