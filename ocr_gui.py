@@ -328,28 +328,10 @@ class MainWindow(QMainWindow):
         zoom_label = QLabel("Zoom")
         self.zoom_slider = QSlider(Qt.Horizontal)
         self.zoom_slider.setRange(25, 400)
-        self.zoom_slider.setValue(100)
-        self.zoom_slider.valueChanged.connect(self._handle_zoom_slider_change)
-        self.zoom_value_label = QLabel("100%")
-        self.zoom_reset_btn = QPushButton("Adatta")
-        self.zoom_reset_btn.clicked.connect(self._reset_zoom_to_fit)
-        zoom_row.addWidget(zoom_label)
-        zoom_row.addWidget(self.zoom_slider, 1)
-        zoom_row.addWidget(self.zoom_value_label)
-        zoom_row.addWidget(self.zoom_reset_btn)
-        layout.addLayout(zoom_row)
-
         self.ocr_group = self._build_ocr_group()
         layout.addWidget(self.ocr_group)
         self.translation_group = self._build_translation_group()
         layout.addWidget(self.translation_group)
-
-        self.ocr_text = QPlainTextEdit()
-        self.ocr_text.setReadOnly(True)
-        self.ocr_text.setPlaceholderText("Testo riconosciuto")
-
-        self.translation_text = QPlainTextEdit()
-        self.translation_text.setReadOnly(True)
         self.translation_text.setPlaceholderText("Traduzione")
 
         layout.addWidget(QLabel("Testo OCR"))
@@ -357,24 +339,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Traduzione"))
         layout.addWidget(self.translation_text, 1)
         layout.addStretch(1)
-        self._update_panel_states()
-        return container
-
-    def _build_ocr_group(self) -> QGroupBox:
-        group = QGroupBox("Riconoscimento")
+        layout = QVBoxLayout()
         form = QFormLayout()
 
         self.doc_lang_combo = QComboBox()
-        primary_lang = "en"
-        matched_index = -1
-        for idx, (label, code) in enumerate(COMMON_LANG_CHOICES):
-            self.doc_lang_combo.addItem(f"{label} ({code})", code)
-            if matched_index == -1 and primary_lang and code == primary_lang:
-                matched_index = idx
-        if matched_index >= 0:
-            self.doc_lang_combo.setCurrentIndex(matched_index)
-        else:
-            self.doc_lang_combo.setCurrentIndex(0)
+        self._populate_language_combo(self.doc_lang_combo, default_code="en")
         form.addRow("Lingua documento", self.doc_lang_combo)
 
         self.allow_gpu = QCheckBox("Consenti uso GPU se disponibile")
@@ -393,12 +362,23 @@ class MainWindow(QMainWindow):
         self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
         form.addRow(self.toggle_overlays_btn)
 
-        group.setLayout(form)
-        return group
+        layout.addLayout(form)
+        self.ocr_text = QPlainTextEdit()
+        self.ocr_text.setReadOnly(True)
+        self.ocr_text.setPlaceholderText("Testo riconosciuto")
+        layout.addWidget(QLabel("Testo OCR"))
+        layout.addWidget(self.ocr_text)
+        group.setLayout(layout)
+        self.toggle_overlays_btn.setEnabled(False)
+        self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
+        form.addRow(self.toggle_overlays_btn)
 
-    def _build_translation_group(self) -> QGroupBox:
-        group = QGroupBox("Traduzione")
+        layout = QVBoxLayout()
         form = QFormLayout()
+
+        self.target_lang_combo = QComboBox()
+        self._populate_language_combo(self.target_lang_combo, default_code=DEFAULT_TARGET_LANG)
+        form.addRow("Lingua destinazione", self.target_lang_combo)
 
         self.model_choice = QComboBox()
         self.model_choice.addItems(sorted(MODEL_PRESETS.keys()))
@@ -413,10 +393,18 @@ class MainWindow(QMainWindow):
         self.max_chars.setValue(DEFAULT_MAX_CHARS)
         form.addRow("Max caratteri chunk", self.max_chars)
 
-        self.target_lang = QLineEdit(DEFAULT_TARGET_LANG)
-        form.addRow("Lingua destinazione", self.target_lang)
-
         self.translate_btn = QPushButton("Traduci testo")
+        self.translate_btn.setEnabled(False)
+        self.translate_btn.clicked.connect(self.run_translation)
+        form.addRow(self.translate_btn)
+
+        layout.addLayout(form)
+        self.translation_text = QPlainTextEdit()
+        self.translation_text.setReadOnly(True)
+        self.translation_text.setPlaceholderText("Traduzione")
+        layout.addWidget(QLabel("Testo tradotto"))
+        layout.addWidget(self.translation_text)
+        group.setLayout(layout)
         self.translate_btn.setEnabled(False)
         self.translate_btn.clicked.connect(self.run_translation)
         form.addRow(self.translate_btn)
@@ -462,7 +450,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "OCR mancante", "Esegui prima l'OCR")
             return
         source = self._selected_document_language()
-        target = self.target_lang.text().strip()
+        target = self._selected_target_language()
         if not source or not target:
             QMessageBox.warning(self, "Lingue", "Specifica lingua documento e destinazione")
             return
@@ -556,17 +544,42 @@ class MainWindow(QMainWindow):
             return fallback.strip()
         return COMMON_LANG_CHOICES[0][1]
 
-    def _set_busy(self, busy: bool, message: str) -> None:
-        self.centralWidget().setDisabled(busy)
-        self.status_label.setText(message)
-        if busy:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-        else:
-            QApplication.restoreOverrideCursor()
+    def _selected_target_language(self) -> str:
+        data = self.target_lang_combo.currentData()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        fallback = self.target_lang_combo.itemData(0)
+        if isinstance(fallback, str) and fallback.strip():
+            return fallback.strip()
+        return COMMON_LANG_CHOICES[0][1]
 
-    def _update_panel_states(self) -> None:
-        has_image = self.current_image is not None
-        has_ready_ocr = bool(self.current_regions) and self._ocr_ready
+    def _populate_language_combo(self, combo: QComboBox, default_code: str) -> None:
+        matched_index = -1
+        for idx, (label, code) in enumerate(COMMON_LANG_CHOICES):
+            combo.addItem(label, code)
+            if matched_index == -1 and code == default_code:
+                matched_index = idx
+        if matched_index >= 0:
+            combo.setCurrentIndex(matched_index)
+        else:
+            combo.setCurrentIndex(0)
+            # Removed standalone text areas; will embed within group boxes
+            self.ocr_text = QPlainTextEdit()
+            self.ocr_text.setReadOnly(True)
+            self.ocr_text.setPlaceholderText("Testo riconosciuto")
+            self.translation_text = QPlainTextEdit()
+            self.translation_text.setReadOnly(True)
+            self.translation_text.setPlaceholderText("Traduzione")
+        
+            ocr_group_layout = QVBoxLayout()
+            ocr_group_layout.addWidget(QLabel("Testo OCR"))
+            ocr_group_layout.addWidget(self.ocr_text, 1)
+            self.ocr_group.setLayout(ocr_group_layout)
+        
+            translation_group_layout = QVBoxLayout()
+            translation_group_layout.addWidget(QLabel("Traduzione"))
+            translation_group_layout.addWidget(self.translation_text, 1)
+            self.translation_group.setLayout(translation_group_layout)
         if hasattr(self, "ocr_group"):
             self.ocr_group.setEnabled(has_image)
         if hasattr(self, "translation_group"):
