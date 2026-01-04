@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         self.current_image: Path | None = None
         self.current_regions: List[OcrRegion] = []
         self._threads: List[QThread] = []
+        self._workers: List[Worker] = []
         self._build_ui()
         self.image_canvas.clear()
 
@@ -396,10 +397,12 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._handle_task_error)
         worker.progress.connect(self.status_label.setText)
         worker.finished.connect(lambda: self._set_busy(False, "Pronto"))
+        worker.finished.connect(lambda: self._release_worker(worker))
         thread.finished.connect(lambda: self._cleanup_thread(thread))
         thread.started.connect(worker.run)
         thread.start()
         self._threads.append(thread)
+        self._workers.append(worker)
         print(f"[GUI] Active threads: {len(self._threads)}", flush=True)
         print(f"[GUI] Thread launched for {fn.__name__}", flush=True)
 
@@ -442,6 +445,12 @@ class MainWindow(QMainWindow):
     def _cleanup_thread(self, thread: QThread) -> None:
         try:
             self._threads.remove(thread)
+        except ValueError:
+            return
+
+    def _release_worker(self, worker: Worker) -> None:
+        try:
+            self._workers.remove(worker)
         except ValueError:
             return
 
