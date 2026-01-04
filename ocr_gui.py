@@ -2,12 +2,15 @@
 """Desktop GUI for the OCR + translation pipeline."""
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
 import inspect
 from typing import Callable, List, Sequence
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from PySide6.QtCore import QObject, QPointF, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QPolygonF, QCloseEvent
@@ -65,17 +68,6 @@ COMMON_LANG_CHOICES: list[tuple[str, str]] = [
 
 
 _GLOBAL_EXCEPTION_HOOK_INSTALLED = False
-
-
-def _default_doc_lang() -> str:
-    for chunk in DEFAULT_OCR_LANGS.split(","):
-        code = chunk.strip()
-        if code:
-            return code
-    return "en"
-
-
-
 def install_global_exception_hook() -> None:
     """Ensure every uncaught exception prints to stderr and shows a popup."""
     global _GLOBAL_EXCEPTION_HOOK_INSTALLED
@@ -249,17 +241,16 @@ class MainWindow(QMainWindow):
         form = QFormLayout()
 
         self.doc_lang_combo = QComboBox()
-        self.doc_lang_combo.setEditable(True)
-        default_lang = _default_doc_lang()
+        primary_lang = next((chunk.strip() for chunk in DEFAULT_OCR_LANGS.split(",") if chunk.strip()), None)
         matched_index = -1
         for idx, (label, code) in enumerate(COMMON_LANG_CHOICES):
             self.doc_lang_combo.addItem(f"{label} ({code})", code)
-            if matched_index == -1 and code == default_lang:
+            if matched_index == -1 and primary_lang and code == primary_lang:
                 matched_index = idx
         if matched_index >= 0:
             self.doc_lang_combo.setCurrentIndex(matched_index)
         else:
-            self.doc_lang_combo.setEditText(default_lang)
+            self.doc_lang_combo.setCurrentIndex(0)
         form.addRow("Lingua documento", self.doc_lang_combo)
 
         self.allow_gpu = QCheckBox("Consenti uso GPU se disponibile")
@@ -382,6 +373,7 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._handle_task_error)
         worker.progress.connect(self.status_label.setText)
         worker.finished.connect(lambda: self._set_busy(False, "Pronto"))
+        thread.finished.connect(lambda: self._cleanup_thread(thread))
         thread.started.connect(worker.run)
         thread.start()
         self._threads.append(thread)
@@ -392,8 +384,10 @@ class MainWindow(QMainWindow):
         data = self.doc_lang_combo.currentData()
         if isinstance(data, str) and data.strip():
             return data.strip()
-        text = self.doc_lang_combo.currentText().strip()
-        return text or _default_doc_lang()
+        fallback = self.doc_lang_combo.itemData(0)
+        if isinstance(fallback, str) and fallback.strip():
+            return fallback.strip()
+        return COMMON_LANG_CHOICES[0][1]
 
     def _set_busy(self, busy: bool, message: str) -> None:
         self.centralWidget().setDisabled(busy)
@@ -419,7 +413,14 @@ class MainWindow(QMainWindow):
                     thread.wait()
             QApplication.restoreOverrideCursor()
             self.status_label.setText("Pronto")
+        self._threads.clear()
         super().closeEvent(event)
+
+    def _cleanup_thread(self, thread: QThread) -> None:
+        try:
+            self._threads.remove(thread)
+        except ValueError:
+            return
 
     def _handle_task_error(self, details: str) -> None:
         # Make sure the UI gets re-enabled even if the worker crashes before
