@@ -50,7 +50,29 @@ class TranslationPayload:
     combined_text: str
 
 
+COMMON_LANG_CHOICES: list[tuple[str, str]] = [
+    ("Italiano", "it"),
+    ("Inglese", "en"),
+    ("Spagnolo", "es"),
+    ("Francese", "fr"),
+    ("Tedesco", "de"),
+    ("Portoghese", "pt"),
+    ("Russo", "ru"),
+    ("Ucraino", "uk"),
+    ("Polacco", "pl"),
+    ("Rumeno", "ro"),
+]
+
+
 _GLOBAL_EXCEPTION_HOOK_INSTALLED = False
+
+
+def _default_doc_lang() -> str:
+    for chunk in DEFAULT_OCR_LANGS.split(","):
+        code = chunk.strip()
+        if code:
+            return code
+    return "en"
 
 
 
@@ -226,12 +248,19 @@ class MainWindow(QMainWindow):
         group = QGroupBox("Riconoscimento")
         form = QFormLayout()
 
-        self.ocr_langs = QLineEdit(DEFAULT_OCR_LANGS)
-        form.addRow("Lingue OCR", self.ocr_langs)
-
-        self.source_lang = QLineEdit()
-        self.source_lang.setPlaceholderText("es. ru")
-        form.addRow("Lingua sorgente", self.source_lang)
+        self.doc_lang_combo = QComboBox()
+        self.doc_lang_combo.setEditable(True)
+        default_lang = _default_doc_lang()
+        matched_index = -1
+        for idx, (label, code) in enumerate(COMMON_LANG_CHOICES):
+            self.doc_lang_combo.addItem(f"{label} ({code})", code)
+            if matched_index == -1 and code == default_lang:
+                matched_index = idx
+        if matched_index >= 0:
+            self.doc_lang_combo.setCurrentIndex(matched_index)
+        else:
+            self.doc_lang_combo.setEditText(default_lang)
+        form.addRow("Lingua documento", self.doc_lang_combo)
 
         self.allow_gpu = QCheckBox("Consenti uso GPU se disponibile")
         form.addRow("Hardware", self.allow_gpu)
@@ -290,19 +319,15 @@ class MainWindow(QMainWindow):
         if not self.current_image:
             QMessageBox.information(self, "Immagine mancante", "Carica prima un'immagine")
             return
-        lang_codes = [code.strip() for code in self.ocr_langs.text().split(",") if code.strip()]
-        if not lang_codes:
-            QMessageBox.warning(self, "Lingue mancanti", "Specifica almeno una lingua OCR")
-            return
-        source = self.source_lang.text().strip()
-        if not source:
-            QMessageBox.warning(self, "Lingua sorgente", "Inserisci la lingua sorgente per la traduzione")
+        document_lang = self._selected_document_language()
+        if not document_lang:
+            QMessageBox.warning(self, "Lingua documento", "Scegli o inserisci la lingua del documento")
             return
         print("[GUI] run_ocr invoked", flush=True)
         self._start_task(
             perform_ocr_task,
             self.current_image,
-            lang_codes,
+            [document_lang],
             not self.allow_gpu.isChecked(),
             on_success=self._handle_ocr_success,
             busy_message="OCR in corso…",
@@ -312,10 +337,10 @@ class MainWindow(QMainWindow):
         if not self.current_regions:
             QMessageBox.information(self, "OCR mancante", "Esegui prima l'OCR")
             return
-        source = self.source_lang.text().strip()
+        source = self._selected_document_language()
         target = self.target_lang.text().strip()
         if not source or not target:
-            QMessageBox.warning(self, "Lingue", "Specifica lingua sorgente e destinazione")
+            QMessageBox.warning(self, "Lingue", "Specifica lingua documento e destinazione")
             return
         print("[GUI] run_translation invoked", flush=True)
         self._start_task(
@@ -362,6 +387,13 @@ class MainWindow(QMainWindow):
         self._threads.append(thread)
         print(f"[GUI] Active threads: {len(self._threads)}", flush=True)
         print(f"[GUI] Thread launched for {fn.__name__}", flush=True)
+
+    def _selected_document_language(self) -> str:
+        data = self.doc_lang_combo.currentData()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        text = self.doc_lang_combo.currentText().strip()
+        return text or _default_doc_lang()
 
     def _set_busy(self, busy: bool, message: str) -> None:
         self.centralWidget().setDisabled(busy)
