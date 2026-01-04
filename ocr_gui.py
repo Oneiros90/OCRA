@@ -256,6 +256,10 @@ class MainWindow(QMainWindow):
         self.allow_gpu = QCheckBox("Consenti uso GPU se disponibile")
         form.addRow("Hardware", self.allow_gpu)
 
+        self.paragraph_mode = QCheckBox("Raggruppa testo in paragrafi")
+        self.paragraph_mode.setChecked(True)
+        form.addRow("Layout OCR", self.paragraph_mode)
+
         self.run_ocr_btn = QPushButton("Esegui OCR")
         self.run_ocr_btn.clicked.connect(self.run_ocr)
         form.addRow(self.run_ocr_btn)
@@ -320,6 +324,7 @@ class MainWindow(QMainWindow):
             self.current_image,
             [document_lang],
             not self.allow_gpu.isChecked(),
+            self.paragraph_mode.isChecked(),
             on_success=self._handle_ocr_success,
             busy_message="OCR in corso…",
         )
@@ -433,6 +438,7 @@ def perform_ocr_task(
     image_path: Path,
     lang_codes: Sequence[str],
     force_cpu: bool,
+    paragraph_mode: bool,
     progress_callback: Callable[[str], None] | None = None,
 ) -> OcrPayload:
     progress = progress_callback or (lambda _msg: None)
@@ -443,7 +449,7 @@ def perform_ocr_task(
     readers = build_readers(lang_codes, use_gpu)
     print(f"[GUI] OCR readers ready ({len(readers)} bundle/s)", flush=True)
     progress("Esecuzione OCR…")
-    regions = run_ocr_detailed(readers, image_path)
+    regions = run_ocr_detailed(readers, image_path, paragraph=paragraph_mode)
     combined = "\n".join(region.text for region in regions)
     progress("OCR completato")
     print("[GUI] OCR task completed", flush=True)
