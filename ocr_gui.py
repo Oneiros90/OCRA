@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ocr_ai.constants import DEFAULT_MAX_CHARS, DEFAULT_OCR_LANGS, DEFAULT_TARGET_LANG, MODEL_PRESETS
+from ocr_ai.constants import DEFAULT_MAX_CHARS, DEFAULT_TARGET_LANG, MODEL_PRESETS
 from ocr_ai.ocr_engine import OcrRegion, build_readers, run_ocr_detailed
 from ocr_ai.runtime import normalize_lang_code, resolve_model_name, should_use_gpu
 from ocr_ai.text_utils import chunk_text
@@ -301,8 +301,10 @@ class MainWindow(QMainWindow):
         self._overlay_texts: List[str] | None = None
         self.overlays_visible = True
         self._ocr_ready = False
+        self._is_busy = False
         self._build_ui()
         self.image_canvas.clear()
+        self._update_panel_states()
 
     def _build_ui(self) -> None:
         splitter = QSplitter()
@@ -328,17 +330,25 @@ class MainWindow(QMainWindow):
         zoom_label = QLabel("Zoom")
         self.zoom_slider = QSlider(Qt.Horizontal)
         self.zoom_slider.setRange(25, 400)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.valueChanged.connect(self._handle_zoom_slider_change)
+        self.zoom_value_label = QLabel("100%")
+        zoom_row.addWidget(zoom_label)
+        zoom_row.addWidget(self.zoom_slider, 1)
+        zoom_row.addWidget(self.zoom_value_label)
+        layout.addLayout(zoom_row)
+
         self.ocr_group = self._build_ocr_group()
         layout.addWidget(self.ocr_group)
+
         self.translation_group = self._build_translation_group()
         layout.addWidget(self.translation_group)
-        self.translation_text.setPlaceholderText("Traduzione")
 
-        layout.addWidget(QLabel("Testo OCR"))
-        layout.addWidget(self.ocr_text, 1)
-        layout.addWidget(QLabel("Traduzione"))
-        layout.addWidget(self.translation_text, 1)
         layout.addStretch(1)
+        return container
+
+    def _build_ocr_group(self) -> QGroupBox:
+        group = QGroupBox("Riconoscimento OCR")
         layout = QVBoxLayout()
         form = QFormLayout()
 
@@ -363,16 +373,18 @@ class MainWindow(QMainWindow):
         form.addRow(self.toggle_overlays_btn)
 
         layout.addLayout(form)
+
         self.ocr_text = QPlainTextEdit()
         self.ocr_text.setReadOnly(True)
         self.ocr_text.setPlaceholderText("Testo riconosciuto")
         layout.addWidget(QLabel("Testo OCR"))
-        layout.addWidget(self.ocr_text)
-        group.setLayout(layout)
-        self.toggle_overlays_btn.setEnabled(False)
-        self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
-        form.addRow(self.toggle_overlays_btn)
+        layout.addWidget(self.ocr_text, 1)
 
+        group.setLayout(layout)
+        return group
+
+    def _build_translation_group(self) -> QGroupBox:
+        group = QGroupBox("Traduzione")
         layout = QVBoxLayout()
         form = QFormLayout()
 
@@ -399,17 +411,14 @@ class MainWindow(QMainWindow):
         form.addRow(self.translate_btn)
 
         layout.addLayout(form)
+
         self.translation_text = QPlainTextEdit()
         self.translation_text.setReadOnly(True)
         self.translation_text.setPlaceholderText("Traduzione")
         layout.addWidget(QLabel("Testo tradotto"))
-        layout.addWidget(self.translation_text)
-        group.setLayout(layout)
-        self.translate_btn.setEnabled(False)
-        self.translate_btn.clicked.connect(self.run_translation)
-        form.addRow(self.translate_btn)
+        layout.addWidget(self.translation_text, 1)
 
-        group.setLayout(form)
+        group.setLayout(layout)
         return group
 
     def open_image(self) -> None:
@@ -554,38 +563,43 @@ class MainWindow(QMainWindow):
         return COMMON_LANG_CHOICES[0][1]
 
     def _populate_language_combo(self, combo: QComboBox, default_code: str) -> None:
+        combo.clear()
         matched_index = -1
         for idx, (label, code) in enumerate(COMMON_LANG_CHOICES):
             combo.addItem(label, code)
             if matched_index == -1 and code == default_code:
                 matched_index = idx
-        if matched_index >= 0:
-            combo.setCurrentIndex(matched_index)
-        else:
-            combo.setCurrentIndex(0)
-            # Removed standalone text areas; will embed within group boxes
-            self.ocr_text = QPlainTextEdit()
-            self.ocr_text.setReadOnly(True)
-            self.ocr_text.setPlaceholderText("Testo riconosciuto")
-            self.translation_text = QPlainTextEdit()
-            self.translation_text.setReadOnly(True)
-            self.translation_text.setPlaceholderText("Traduzione")
-        
-            ocr_group_layout = QVBoxLayout()
-            ocr_group_layout.addWidget(QLabel("Testo OCR"))
-            ocr_group_layout.addWidget(self.ocr_text, 1)
-            self.ocr_group.setLayout(ocr_group_layout)
-        
-            translation_group_layout = QVBoxLayout()
-            translation_group_layout.addWidget(QLabel("Traduzione"))
-            translation_group_layout.addWidget(self.translation_text, 1)
-            self.translation_group.setLayout(translation_group_layout)
+        combo.setCurrentIndex(matched_index if matched_index >= 0 else 0)
+
+    def _set_busy(self, busy: bool, message: str) -> None:
+        self._is_busy = busy
+        self.status_label.setText(message)
+        self._update_panel_states()
+
+    def _update_panel_states(self) -> None:
+        has_image = self.image_canvas.has_image()
+        has_ready_ocr = bool(self.current_regions) and self._ocr_ready
+
+        self.open_button.setEnabled(not self._is_busy)
+        if hasattr(self, "zoom_slider"):
+            self.zoom_slider.setEnabled(has_image and not self._is_busy)
+
+        ocr_enabled = has_image and not self._is_busy
+        translation_enabled = has_ready_ocr and not self._is_busy
+
         if hasattr(self, "ocr_group"):
-            self.ocr_group.setEnabled(has_image)
+            self.ocr_group.setEnabled(ocr_enabled)
         if hasattr(self, "translation_group"):
-            self.translation_group.setEnabled(has_image and has_ready_ocr)
-        self.run_ocr_btn.setEnabled(has_image)
-        self.translate_btn.setEnabled(has_ready_ocr)
+            self.translation_group.setEnabled(translation_enabled)
+
+        if hasattr(self, "run_ocr_btn"):
+            self.run_ocr_btn.setEnabled(has_image and not self._is_busy)
+        if hasattr(self, "translate_btn"):
+            self.translate_btn.setEnabled(translation_enabled)
+
+        btn = getattr(self, "toggle_overlays_btn", None)
+        if btn is not None:
+            btn.setEnabled(has_ready_ocr and not self._is_busy)
 
     def _render_overlays(self) -> None:
         btn = getattr(self, "toggle_overlays_btn", None)
