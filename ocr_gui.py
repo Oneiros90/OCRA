@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Lingua documento", "Scegli o inserisci la lingua del documento")
             return
         print("[GUI] run_ocr invoked", flush=True)
-        self._reset_ocr_outputs()
+        self._prepare_for_new_ocr_run()
         self._start_task(
             perform_ocr_task,
             self.current_image,
@@ -374,6 +374,11 @@ class MainWindow(QMainWindow):
     def _reset_ocr_outputs(self) -> None:
         self.current_regions = []
         self.ocr_text.clear()
+        self.translation_text.clear()
+        self.translate_btn.setEnabled(False)
+        self.image_canvas.clear_overlays()
+
+    def _prepare_for_new_ocr_run(self) -> None:
         self.translation_text.clear()
         self.translate_btn.setEnabled(False)
         self.image_canvas.clear_overlays()
