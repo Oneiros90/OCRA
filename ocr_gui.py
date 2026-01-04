@@ -13,7 +13,17 @@ from typing import Callable, List, Sequence
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from PySide6.QtCore import QObject, QPointF, QSize, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF, QCloseEvent
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QCloseEvent,
+    QTextDocument,
+    QTextOption,
+)
 from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
@@ -240,24 +250,35 @@ class ImageCanvas(QLabel):
             self.clear()
 
     def _font_for_rect(self, rect, text: str) -> QFont:
-        min_size = 6
-        max_dim = max(rect.width(), rect.height(), 1.0)
-        max_size = int(max(min_size, min(self._font_size * 2, max_dim)))
-        flags = Qt.AlignCenter | Qt.TextWordWrap
-        selected = min_size
+        text = text.strip() or "?"
+        min_size = 8
+        max_dim = max(12, min(rect.width(), rect.height(), 400))
+        max_size = int(max(self._font_size * 3, max_dim))
+        option = QTextOption()
+        option.setAlignment(Qt.AlignCenter)
+        option.setWrapMode(QTextOption.WordWrap)
+        doc = QTextDocument()
+        doc.setDefaultTextOption(option)
+        doc.setPlainText(text)
+        doc.setDocumentMargin(0)
+        doc.setTextWidth(rect.width())
+
+        def fits(size: int) -> bool:
+            font = QFont(self._font_family, size)
+            doc.setDefaultFont(font)
+            layout_size = doc.size()
+            return layout_size.width() <= rect.width() * 1.02 and layout_size.height() <= rect.height() * 0.98
+
+        best = min_size
         low, high = min_size, max_size
         while low <= high:
             mid = (low + high) // 2
-            font = QFont(self._font_family, mid)
-            metrics = QFontMetrics(font)
-            bounds = metrics.boundingRect(rect.toRect(), flags, text)
-            if bounds.width() <= rect.width() * 0.95 and bounds.height() <= rect.height() * 0.95:
-                selected = mid
+            if fits(mid):
+                best = mid
                 low = mid + 1
             else:
                 high = mid - 1
-        font = QFont(self._font_family, selected)
-        return font
+        return QFont(self._font_family, best)
 
 
 class MainWindow(QMainWindow):
