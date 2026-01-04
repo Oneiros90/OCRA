@@ -1,0 +1,8 @@
+numpy==1.26.4
+easyocr==1.7.1
+torch==2.2.0
+torchvision==0.17.0
+transformers==4.36.2
+sentencepiece==0.1.99
+Pillow==10.1.0
+protobuf==4.25.3
