@@ -298,6 +298,8 @@ class MainWindow(QMainWindow):
         self.current_regions: List[OcrRegion] = []
         self._threads: List[QThread] = []
         self._workers: List[Worker] = []
+        self._overlay_texts: List[str] | None = None
+        self.overlays_visible = True
         self._build_ui()
         self.image_canvas.clear()
 
@@ -335,6 +337,11 @@ class MainWindow(QMainWindow):
         zoom_row.addWidget(self.zoom_value_label)
         zoom_row.addWidget(self.zoom_reset_btn)
         layout.addLayout(zoom_row)
+
+        self.toggle_overlays_btn = QPushButton("Nascondi riquadri")
+        self.toggle_overlays_btn.setEnabled(False)
+        self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
+        layout.addWidget(self.toggle_overlays_btn)
 
         layout.addWidget(self._build_ocr_group())
         layout.addWidget(self._build_translation_group())
@@ -379,6 +386,7 @@ class MainWindow(QMainWindow):
         form.addRow("Layout OCR", self.paragraph_mode)
 
         self.run_ocr_btn = QPushButton("Esegui OCR")
+        self.run_ocr_btn.setEnabled(False)
         self.run_ocr_btn.clicked.connect(self.run_ocr)
         form.addRow(self.run_ocr_btn)
 
@@ -423,6 +431,7 @@ class MainWindow(QMainWindow):
             return
         self.current_image = Path(file_path)
         self.image_canvas.set_image(pixmap)
+        self.run_ocr_btn.setEnabled(True)
         QTimer.singleShot(0, self._reset_zoom_to_fit)
         self._reset_ocr_outputs()
 
@@ -470,29 +479,39 @@ class MainWindow(QMainWindow):
 
     def _handle_ocr_success(self, payload: OcrPayload) -> None:
         self.current_regions = payload.regions
+        self._overlay_texts = None
         self.ocr_text.setPlainText(payload.combined_text)
         if self.current_regions:
-            self.image_canvas.show_regions(self.current_regions)
-            self.translate_btn.setEnabled(True)
+            self._render_overlays()
+            self.translate_btn.setEnabled(self.current_image is not None)
         else:
             QMessageBox.information(self, "Nessun testo", "Non è stato trovato testo nell'immagine")
 
     def _handle_translation_success(self, payload: TranslationPayload) -> None:
         self.translation_text.setPlainText(payload.combined_text)
         if self.current_regions:
-            self.image_canvas.show_regions(self.current_regions, payload.overlay_texts)
+            self._overlay_texts = payload.overlay_texts
+            self._render_overlays()
 
     def _reset_ocr_outputs(self) -> None:
         self.current_regions = []
+        self._overlay_texts = None
+        self.overlays_visible = True
         self.ocr_text.clear()
         self.translation_text.clear()
         self.translate_btn.setEnabled(False)
         self.image_canvas.clear_overlays()
+        if hasattr(self, "toggle_overlays_btn"):
+            self.toggle_overlays_btn.setEnabled(False)
+            self.toggle_overlays_btn.setText("Nascondi riquadri")
 
     def _prepare_for_new_ocr_run(self) -> None:
         self.translation_text.clear()
         self.translate_btn.setEnabled(False)
         self.image_canvas.clear_overlays()
+        self._overlay_texts = None
+        if hasattr(self, "toggle_overlays_btn"):
+            self.toggle_overlays_btn.setEnabled(False)
 
     def _start_task(self, fn, *args, on_success, busy_message: str) -> None:
         print(f"[GUI] Scheduling task: {fn.__name__}", flush=True)
@@ -532,6 +551,27 @@ class MainWindow(QMainWindow):
             QApplication.setOverrideCursor(Qt.WaitCursor)
         else:
             QApplication.restoreOverrideCursor()
+
+    def _render_overlays(self) -> None:
+        if not self.current_regions:
+            self.image_canvas.clear_overlays()
+            self.toggle_overlays_btn.setEnabled(False)
+            self.toggle_overlays_btn.setText("Nascondi riquadri")
+            return
+        self.toggle_overlays_btn.setEnabled(True)
+        if not self.overlays_visible:
+            self.toggle_overlays_btn.setText("Mostra riquadri")
+            self.image_canvas.clear_overlays()
+            return
+        payload = self._overlay_texts if self._overlay_texts else None
+        self.image_canvas.show_regions(self.current_regions, payload)
+        self.toggle_overlays_btn.setText("Nascondi riquadri")
+
+    def _toggle_overlays(self) -> None:
+        if not self.current_regions:
+            return
+        self.overlays_visible = not self.overlays_visible
+        self._render_overlays()
 
     def _handle_zoom_slider_change(self, value: int) -> None:
         self.zoom_value_label.setText(f"{value}%")
