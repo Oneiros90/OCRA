@@ -300,6 +300,7 @@ class MainWindow(QMainWindow):
         self._workers: List[Worker] = []
         self._overlay_texts: List[str] | None = None
         self.overlays_visible = True
+        self._ocr_ready = False
         self._build_ui()
         self.image_canvas.clear()
 
@@ -338,13 +339,10 @@ class MainWindow(QMainWindow):
         zoom_row.addWidget(self.zoom_reset_btn)
         layout.addLayout(zoom_row)
 
-        self.toggle_overlays_btn = QPushButton("Nascondi riquadri")
-        self.toggle_overlays_btn.setEnabled(False)
-        self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
-        layout.addWidget(self.toggle_overlays_btn)
-
-        layout.addWidget(self._build_ocr_group())
-        layout.addWidget(self._build_translation_group())
+        self.ocr_group = self._build_ocr_group()
+        layout.addWidget(self.ocr_group)
+        self.translation_group = self._build_translation_group()
+        layout.addWidget(self.translation_group)
 
         self.ocr_text = QPlainTextEdit()
         self.ocr_text.setReadOnly(True)
@@ -359,6 +357,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Traduzione"))
         layout.addWidget(self.translation_text, 1)
         layout.addStretch(1)
+        self._update_panel_states()
         return container
 
     def _build_ocr_group(self) -> QGroupBox:
@@ -366,7 +365,7 @@ class MainWindow(QMainWindow):
         form = QFormLayout()
 
         self.doc_lang_combo = QComboBox()
-        primary_lang = next((chunk.strip() for chunk in DEFAULT_OCR_LANGS.split(",") if chunk.strip()), None)
+        primary_lang = "en"
         matched_index = -1
         for idx, (label, code) in enumerate(COMMON_LANG_CHOICES):
             self.doc_lang_combo.addItem(f"{label} ({code})", code)
@@ -386,9 +385,13 @@ class MainWindow(QMainWindow):
         form.addRow("Layout OCR", self.paragraph_mode)
 
         self.run_ocr_btn = QPushButton("Esegui OCR")
-        self.run_ocr_btn.setEnabled(False)
         self.run_ocr_btn.clicked.connect(self.run_ocr)
         form.addRow(self.run_ocr_btn)
+
+        self.toggle_overlays_btn = QPushButton("Nascondi riconoscimento")
+        self.toggle_overlays_btn.setEnabled(False)
+        self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
+        form.addRow(self.toggle_overlays_btn)
 
         group.setLayout(form)
         return group
@@ -431,7 +434,6 @@ class MainWindow(QMainWindow):
             return
         self.current_image = Path(file_path)
         self.image_canvas.set_image(pixmap)
-        self.run_ocr_btn.setEnabled(True)
         QTimer.singleShot(0, self._reset_zoom_to_fit)
         self._reset_ocr_outputs()
 
@@ -482,36 +484,46 @@ class MainWindow(QMainWindow):
         self._overlay_texts = None
         self.ocr_text.setPlainText(payload.combined_text)
         if self.current_regions:
+            self._ocr_ready = True
+            self.overlays_visible = True
             self._render_overlays()
-            self.translate_btn.setEnabled(self.current_image is not None)
         else:
+            self._ocr_ready = False
             QMessageBox.information(self, "Nessun testo", "Non è stato trovato testo nell'immagine")
+        self._update_panel_states()
 
     def _handle_translation_success(self, payload: TranslationPayload) -> None:
         self.translation_text.setPlainText(payload.combined_text)
         if self.current_regions:
             self._overlay_texts = payload.overlay_texts
             self._render_overlays()
+        self._update_panel_states()
 
     def _reset_ocr_outputs(self) -> None:
         self.current_regions = []
         self._overlay_texts = None
         self.overlays_visible = True
+        self._ocr_ready = False
         self.ocr_text.clear()
         self.translation_text.clear()
         self.translate_btn.setEnabled(False)
         self.image_canvas.clear_overlays()
         if hasattr(self, "toggle_overlays_btn"):
             self.toggle_overlays_btn.setEnabled(False)
-            self.toggle_overlays_btn.setText("Nascondi riquadri")
+            self.toggle_overlays_btn.setText("Nascondi riconoscimento")
+        self._update_panel_states()
 
     def _prepare_for_new_ocr_run(self) -> None:
         self.translation_text.clear()
         self.translate_btn.setEnabled(False)
         self.image_canvas.clear_overlays()
         self._overlay_texts = None
+        self._ocr_ready = False
+        self.overlays_visible = True
         if hasattr(self, "toggle_overlays_btn"):
             self.toggle_overlays_btn.setEnabled(False)
+            self.toggle_overlays_btn.setText("Nascondi riconoscimento")
+        self._update_panel_states()
 
     def _start_task(self, fn, *args, on_success, busy_message: str) -> None:
         print(f"[GUI] Scheduling task: {fn.__name__}", flush=True)
@@ -552,23 +564,36 @@ class MainWindow(QMainWindow):
         else:
             QApplication.restoreOverrideCursor()
 
+    def _update_panel_states(self) -> None:
+        has_image = self.current_image is not None
+        has_ready_ocr = bool(self.current_regions) and self._ocr_ready
+        if hasattr(self, "ocr_group"):
+            self.ocr_group.setEnabled(has_image)
+        if hasattr(self, "translation_group"):
+            self.translation_group.setEnabled(has_image and has_ready_ocr)
+        self.run_ocr_btn.setEnabled(has_image)
+        self.translate_btn.setEnabled(has_ready_ocr)
+
     def _render_overlays(self) -> None:
-        if not self.current_regions:
-            self.image_canvas.clear_overlays()
-            self.toggle_overlays_btn.setEnabled(False)
-            self.toggle_overlays_btn.setText("Nascondi riquadri")
+        btn = getattr(self, "toggle_overlays_btn", None)
+        if btn is None:
             return
-        self.toggle_overlays_btn.setEnabled(True)
+        if not self._ocr_ready or not self.current_regions:
+            self.image_canvas.clear_overlays()
+            btn.setEnabled(False)
+            btn.setText("Nascondi riconoscimento")
+            return
+        btn.setEnabled(True)
         if not self.overlays_visible:
-            self.toggle_overlays_btn.setText("Mostra riquadri")
+            btn.setText("Mostra riconoscimento")
             self.image_canvas.clear_overlays()
             return
         payload = self._overlay_texts if self._overlay_texts else None
         self.image_canvas.show_regions(self.current_regions, payload)
-        self.toggle_overlays_btn.setText("Nascondi riquadri")
+        btn.setText("Nascondi riconoscimento")
 
     def _toggle_overlays(self) -> None:
-        if not self.current_regions:
+        if not self._ocr_ready or not self.current_regions:
             return
         self.overlays_visible = not self.overlays_visible
         self._render_overlays()
