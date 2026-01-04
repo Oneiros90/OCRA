@@ -12,9 +12,11 @@ from typing import Callable, List, Sequence
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-from PySide6.QtCore import QObject, QPointF, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QPointF, QSize, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QPolygonF, QCloseEvent
 from PySide6.QtWidgets import (
+    QScrollArea,
+    QSlider,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -130,6 +132,8 @@ class Worker(QObject):
 
 
 class ImageCanvas(QLabel):
+    zoomChanged = Signal(float)
+
     def __init__(self) -> None:
         super().__init__()
         self.setAlignment(Qt.AlignCenter)
@@ -138,11 +142,16 @@ class ImageCanvas(QLabel):
         self._base_pixmap: QPixmap | None = None
         self._annotated_pixmap: QPixmap | None = None
         self._font_size = 18
+        self._zoom = 1.0
+        self._min_zoom = 0.25
+        self._max_zoom = 4.0
 
     def set_image(self, pixmap: QPixmap) -> None:
         self._base_pixmap = pixmap
         self._annotated_pixmap = pixmap
+        self._zoom = 1.0
         self._update_scaled()
+        self.zoomChanged.emit(self._zoom)
 
     def show_regions(self, regions: Sequence[OcrRegion], overlay_texts: Sequence[str] | None = None) -> None:
         if not self._base_pixmap:
@@ -173,15 +182,53 @@ class ImageCanvas(QLabel):
         self._annotated_pixmap = pixmap
         self._update_scaled()
 
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
+    def set_zoom(self, zoom: float) -> None:
+        if not self._base_pixmap:
+            return
+        clamped = max(self._min_zoom, min(self._max_zoom, zoom))
+        if abs(clamped - self._zoom) < 1e-3:
+            return
+        self._zoom = clamped
         self._update_scaled()
+        self.zoomChanged.emit(self._zoom)
+
+    def zoom_factor(self) -> float:
+        return self._zoom
+
+    def fit_to_viewport(self, viewport_size: QSize) -> None:
+        pixmap = self._annotated_pixmap or self._base_pixmap
+        if not pixmap or viewport_size.width() <= 0 or viewport_size.height() <= 0:
+            return
+        w_ratio = viewport_size.width() / pixmap.width()
+        h_ratio = viewport_size.height() / pixmap.height()
+        target = min(1.0, w_ratio, h_ratio)
+        self._zoom = max(self._min_zoom, min(self._max_zoom, target))
+        self._update_scaled()
+        self.zoomChanged.emit(self._zoom)
+
+    def has_image(self) -> bool:
+        return self._base_pixmap is not None
+
+    def wheelEvent(self, event) -> None:  # type: ignore[override]
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            step = 1.1 if delta > 0 else 0.9
+            self.set_zoom(self._zoom * step)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def _update_scaled(self) -> None:
         pixmap = self._annotated_pixmap or self._base_pixmap
-        if pixmap:
-            scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.setPixmap(scaled)
+        if not pixmap:
+            self.clear()
+            self.setMinimumSize(500, 400)
+            return
+        target_w = max(1, int(pixmap.width() * self._zoom))
+        target_h = max(1, int(pixmap.height() * self._zoom))
+        scaled = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.setPixmap(scaled)
+        self.resize(scaled.size())
 
     def clear_overlays(self) -> None:
         if self._base_pixmap:
@@ -198,6 +245,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("OCR AI Translator")
         self.resize(1400, 800)
         self.image_canvas = ImageCanvas()
+        self.image_canvas.zoomChanged.connect(self._handle_canvas_zoom_change)
+        self.image_scroll = QScrollArea()
+        self.image_scroll.setWidgetResizable(False)
+        self.image_scroll.setAlignment(Qt.AlignCenter)
+        self.image_scroll.setWidget(self.image_canvas)
         self.status_label = QLabel("Pronto")
         self.statusBar().addPermanentWidget(self.status_label)
         self.current_image: Path | None = None
@@ -209,7 +261,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         splitter = QSplitter()
-        splitter.addWidget(self.image_canvas)
+        splitter.addWidget(self.image_scroll)
         splitter.addWidget(self._build_controls())
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -226,6 +278,21 @@ class MainWindow(QMainWindow):
         self.open_button = QPushButton("Apri immagine…")
         self.open_button.clicked.connect(self.open_image)
         layout.addWidget(self.open_button)
+
+        zoom_row = QHBoxLayout()
+        zoom_label = QLabel("Zoom")
+        self.zoom_slider = QSlider(Qt.Horizontal)
+        self.zoom_slider.setRange(25, 400)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.valueChanged.connect(self._handle_zoom_slider_change)
+        self.zoom_value_label = QLabel("100%")
+        self.zoom_reset_btn = QPushButton("Adatta")
+        self.zoom_reset_btn.clicked.connect(self._reset_zoom_to_fit)
+        zoom_row.addWidget(zoom_label)
+        zoom_row.addWidget(self.zoom_slider, 1)
+        zoom_row.addWidget(self.zoom_value_label)
+        zoom_row.addWidget(self.zoom_reset_btn)
+        layout.addLayout(zoom_row)
 
         layout.addWidget(self._build_ocr_group())
         layout.addWidget(self._build_translation_group())
@@ -314,6 +381,7 @@ class MainWindow(QMainWindow):
             return
         self.current_image = Path(file_path)
         self.image_canvas.set_image(pixmap)
+        QTimer.singleShot(0, self._reset_zoom_to_fit)
         self._reset_ocr_outputs()
 
     def run_ocr(self) -> None:
@@ -422,6 +490,30 @@ class MainWindow(QMainWindow):
             QApplication.setOverrideCursor(Qt.WaitCursor)
         else:
             QApplication.restoreOverrideCursor()
+
+    def _handle_zoom_slider_change(self, value: int) -> None:
+        self.zoom_value_label.setText(f"{value}%")
+        self.image_canvas.set_zoom(value / 100.0)
+
+    def _handle_canvas_zoom_change(self, factor: float) -> None:
+        if not hasattr(self, "zoom_slider"):
+            return
+        percent = int(round(factor * 100))
+        percent = max(self.zoom_slider.minimum(), min(self.zoom_slider.maximum(), percent))
+        if self.zoom_slider.value() != percent:
+            self.zoom_slider.blockSignals(True)
+            self.zoom_slider.setValue(percent)
+            self.zoom_slider.blockSignals(False)
+        self.zoom_value_label.setText(f"{percent}%")
+
+    def _reset_zoom_to_fit(self) -> None:
+        if not self.image_canvas.has_image():
+            return
+        viewport = self.image_scroll.viewport().size()
+        if viewport.width() <= 0 or viewport.height() <= 0:
+            QTimer.singleShot(0, self._reset_zoom_to_fit)
+            return
+        self.image_canvas.fit_to_viewport(viewport)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
         if any(thread.isRunning() for thread in self._threads):
