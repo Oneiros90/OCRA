@@ -42,3 +42,44 @@ Parametri principali:
 - Alla prima esecuzione verranno scaricati i pesi; successivamente verranno riutilizzati dalla cache locale.
 - Se desideri velocizzare l'esecuzione e disponi di una GPU compatibile, installa la variante di Torch ottimizzata per il tuo sistema e non usare `--force-cpu`.
 - Alcune lingue (es. cirillico: `ru`, `uk`, `bg`, ecc.) richiedono un modello EasyOCR separato compatibile solo con l'inglese: lo script crea automaticamente più reader e aggrega i risultati in un'unica uscita. Ricordati di passare il relativo codice anche a `--source-lang`.
+
+## Interfaccia grafica desktop
+Per un'esperienza più semplice è disponibile un'applicazione desktop Qt moderna (macOS + Windows) che permette di caricare immagini, configurare l'OCR, vedere i bounding box e tradurre con i modelli Hugging Face.
+
+```bash
+python ocr_gui.py
+```
+
+Funzionalità principali:
+- Apertura rapida delle immagini con anteprima full-size e sovrapposizione dei riquadri EasyOCR.
+- Pannello di destra con le stesse impostazioni della CLI (lingue OCR, modello di traduzione, chunk size, lingua sorgente/destinazione, toggle GPU).
+- Disabilitazione completa dell'interfaccia mentre OCR o traduzione sono in corso, con popup di errore in caso di problemi.
+- Testo riconosciuto e tradotto sempre visibili, con overlay blu semitrasparenti sull'immagine (bordo blu, testo centrato) sia per il sorgente sia per la traduzione.
+
+## Creazione di un eseguibile
+Puoi distribuire l'app GUI come binario standalone grazie a PyInstaller.
+
+### macOS (.app)
+```bash
+pyinstaller ocr_gui.py \
+  --name OCRA \
+  --noconsole \
+  --add-data "ocr_ai:ocr_ai"
+
+open dist/OCRA.app
+```
+
+### Windows (.exe)
+```powershell
+pyinstaller ocr_gui.py \
+  --name OCRA \
+  --noconsole \
+  --add-data "ocr_ai;ocr_ai"
+
+start dist/OCRA/OCRA.exe
+```
+
+Suggerimenti:
+- Firma/notarizza il binario su macOS prima di distribuirlo.
+- Includi `requirements.txt` oppure congela le dipendenze nel virtualenv usato per la compilazione.
+- Aggiorna l'icona (`--icon path/icona.ico`) per un look professionale.

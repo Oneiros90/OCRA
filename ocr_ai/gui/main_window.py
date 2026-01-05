@@ -156,14 +156,14 @@ class MainWindow(QMainWindow):
         self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
         form.addRow(self.toggle_overlays_btn)
 
-        self.font_color_btn = QPushButton("Colore testo")
+        self.font_color_btn = QPushButton()
         self.font_color_btn.clicked.connect(self._choose_font_color)
         form.addRow("Colore testo", self.font_color_btn)
         self._update_color_button(self.font_color_btn, self._font_color)
 
-        self.fill_color_btn = QPushButton("Colore riempimento")
+        self.fill_color_btn = QPushButton()
         self.fill_color_btn.clicked.connect(self._choose_fill_color)
-        form.addRow("Riempimento riquadro", self.fill_color_btn)
+        form.addRow("Colore riquadro", self.fill_color_btn)
         self._update_color_button(self.fill_color_btn, self._fill_color)
 
         layout.addLayout(form)
@@ -493,6 +493,7 @@ class MainWindow(QMainWindow):
     def _update_color_button(self, button: QPushButton, color: QColor) -> None:
         contrast = self._contrast_color(color)
         background = self._rgba_css(color)
+        button.setFixedSize(48, 16)
         button.setStyleSheet(
             f"background-color: {background}; color: {contrast}; border: 1px solid #444;"
         )
