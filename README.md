@@ -1,12 +1,12 @@
-# OCR + Traduzione in Italiano
+# OCR AI Translator
 
-Questo progetto fornisce uno script Python che estrae il testo da un'immagine tramite OCR e lo traduce automaticamente in italiano usando un modello AI multilingua.
+End-to-end toolchain for extracting text from screenshots, documents, and UI mockups, then translating the content with an AI assistant. The project ships with both a command-line workflow and a modern Qt desktop application featuring live overlays, color customization, and LLM-backed translations.
 
-## Requisiti
-- macOS o Windows con Python 3.10+
-- Accesso a internet la prima volta (per scaricare i pesi dei modelli EasyOCR e Hugging Face)
+## Requirements
+- macOS or Windows with Python 3.10+
+- Internet access the first time you run OCR (EasyOCR will download its model bundles) and whenever you request an OpenAI translation
 
-## Setup ambiente virtuale
+## Environment Setup
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -14,50 +14,50 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Utilizzo
+## CLI Usage
+The legacy CLI still ships for batch scenarios and uses EasyOCR + Hugging Face models.
+
 ```bash
-python ocr_translate.py path/alla/immagine.jpg \
+python ocr_translate.py path/to/image.jpg \
   --ocr-langs ru,en,it,fr,es,de,pt \
   --model-choice marian_ru_it \
   --max-chars 600 \
   --source-lang ru \
   --save output.txt
-# aggiungi --allow-gpu per usare una GPU disponibile
+
+# add --allow-gpu to leverage a compatible GPU
 ```
 
-Parametri principali:
-- `image` (posizionale): percorso dell'immagine da processare.
-- `--ocr-langs`: elenco (separato da virgole) dei codici lingua supportati da EasyOCR da caricare (default include `ru` per il cirillico oltre a en/it/fr/es/de/pt).
-- `--model-choice`: preset di modello Hugging Face (m2m100, marian_ru_it, mbart50) con default `m2m100`.
-- `--model`: ID personalizzato su Hugging Face che sovrascrive `--model-choice`.
-- `--max-chars`: lunghezza massima dei chunk inviati al modello di traduzione.
-- `--source-lang`: codice lingua (es. `ru`, `en`, `fr`) del testo OCR riconosciuto; viene passato direttamente al modello di traduzione.
-- `--force-cpu`: forza l'uso della CPU; ora è attivo di default.
-- `--allow-gpu`: disattiva `--force-cpu` e consente l'uso della GPU se presente.
-- `--save`: se indicato, salva il testo tradotto nel percorso scelto.
+Key options:
+- `image`: path to the image you want to process.
+- `--ocr-langs`: comma-separated EasyOCR language codes to preload (pick the smallest list that covers your document).
+- `--model-choice`: Hugging Face preset (`m2m100`, `marian_ru_it`, `mbart50`).
+- `--model`: explicit Hugging Face model ID that overrides `--model-choice`.
+- `--max-chars`: upper bound for each translation chunk.
+- `--source-lang`: language hint for the extracted text.
+- `--force-cpu` / `--allow-gpu`: toggle hardware acceleration.
+- `--save`: write the translated text to disk.
 
-## Note tecniche
-- EasyOCR supporta oltre 80 lingue: consulta la documentazione ufficiale per l'elenco completo dei codici da usare in `--ocr-langs`.
-- Il modello `facebook/m2m100_418M` gestisce centinaia di lingue e produce output in italiano forzando il token `it`. Puoi sostituirlo con modelli MarianMT o MBART se preferisci.
-- Alla prima esecuzione verranno scaricati i pesi; successivamente verranno riutilizzati dalla cache locale.
-- Se desideri velocizzare l'esecuzione e disponi di una GPU compatibile, installa la variante di Torch ottimizzata per il tuo sistema e non usare `--force-cpu`.
-- Alcune lingue (es. cirillico: `ru`, `uk`, `bg`, ecc.) richiedono un modello EasyOCR separato compatibile solo con l'inglese: lo script crea automaticamente più reader e aggrega i risultati in un'unica uscita. Ricordati di passare il relativo codice anche a `--source-lang`.
-
-## Interfaccia grafica desktop
-Per un'esperienza più semplice è disponibile un'applicazione desktop Qt moderna (macOS + Windows) che permette di caricare immagini, configurare l'OCR, vedere i bounding box e tradurre con i modelli Hugging Face.
+## Desktop Application
+Launch the graphical interface with:
 
 ```bash
 python ocr_gui.py
 ```
 
-Funzionalità principali:
-- Apertura rapida delle immagini con anteprima full-size e sovrapposizione dei riquadri EasyOCR.
-- Pannello di destra con le stesse impostazioni della CLI (lingue OCR, modello di traduzione, chunk size, lingua sorgente/destinazione, toggle GPU).
-- Disabilitazione completa dell'interfaccia mentre OCR o traduzione sono in corso, con popup di errore in caso di problemi.
-- Testo riconosciuto e tradotto sempre visibili, con overlay blu semitrasparenti sull'immagine (bordo blu, testo centrato) sia per il sorgente sia per la traduzione.
+Highlights:
+- **Image workflow** – load high-resolution assets, reset zoom-to-fit, and inspect overlays rendered directly on the canvas.
+- **OCR controls** – pick input languages, hardware mode, and paragraph grouping before starting recognition.
+- **Translation controls** – provide your OpenAI API key, desired target language, and optional “attach image” context to boost accuracy.
+- **LLM overlays** – switch between original OCR text and translated text on each bounding box.
+- **Color + export** – dedicated pickers for text/fill colors (alpha supported) and a one-click export of the annotated image.
+- **Localization** – the UI auto-detects the system locale; English is the default and Italian is available when macOS/Windows is set to Italian.
 
-## Creazione di un eseguibile
-Puoi distribuire l'app GUI come binario standalone grazie a PyInstaller.
+## Localization
+All user-facing strings live under `ocr_ai/gui/i18n/translations`. Extend the app to new languages by dropping additional JSON files into that directory. Each key is shared by the CLI helpers, worker threads, and Qt widgets, so adding a locale instantly updates the entire experience.
+
+## Building Standalone Binaries
+Create redistributable packages with PyInstaller.
 
 ### macOS (.app)
 ```bash
@@ -79,7 +79,12 @@ pyinstaller ocr_gui.py \
 start dist/OCRA/OCRA.exe
 ```
 
-Suggerimenti:
-- Firma/notarizza il binario su macOS prima di distribuirlo.
-- Includi `requirements.txt` oppure congela le dipendenze nel virtualenv usato per la compilazione.
-- Aggiorna l'icona (`--icon path/icona.ico`) per un look professionale.
+Tips:
+- Sign / notarize the macOS bundle before distribution.
+- Freeze dependencies inside the virtual environment you used for packaging.
+- Provide a custom icon via `--icon path/to/icon.ico` for a branded look.
+
+## Troubleshooting
+- The first OCR run downloads EasyOCR weights; allow a few minutes and keep the app open.
+- Translation requires a valid OpenAI API key with access to `gpt-4o-mini` or a compatible model.
+- GPU acceleration depends on your local PyTorch build; reinstall torch/torchvision with CUDA support if detection fails.

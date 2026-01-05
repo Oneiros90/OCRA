@@ -11,6 +11,7 @@ from typing import Any, Callable, List, Sequence
 
 import requests
 
+from .gui.i18n.localizer import tr
 from .ocr_engine import OcrRegion
 
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
@@ -42,7 +43,7 @@ class LlmTranslator:
         model: str = DEFAULT_OPENAI_MODEL,
     ) -> None:
         if not api_key or not api_key.strip():
-            raise ValueError("Missing API key for translation")
+            raise ValueError(tr("errors.translation.api_key_missing"))
         self.api_key = api_key.strip()
         self.target_lang = target_lang
         self.include_image = include_image
@@ -59,14 +60,14 @@ class LlmTranslator:
         if not regions:
             return []
         progress = progress_callback or (lambda _msg: None)
-        progress("Preparing translation prompt...")
+        progress(tr("progress.translation.prompt"))
         combined_text = build_combined_text(regions)
         regions_json = build_regions_json(regions)
         prompt = build_prompt(source_lang, self.target_lang, combined_text, regions_json)
         messages = build_messages(prompt, self.include_image, image_path)
-        progress("Requesting translation from LLM...")
+        progress(tr("progress.translation.request"))
         response_text = self._call_openai(messages)
-        progress("Parsing LLM response...")
+        progress(tr("progress.translation.parse"))
         return parse_translation_response(response_text)
 
     def _call_openai(self, messages: List[dict[str, Any]]) -> str:
@@ -82,19 +83,23 @@ class LlmTranslator:
         try:
             response = requests.post(OPENAI_API_URL, headers=headers, json=payload, timeout=60)
         except requests.RequestException as exc:  # pragma: no cover - network
-            raise LlmTranslationError("Failed to contact OpenAI API") from exc
+            raise LlmTranslationError(tr("errors.translation.network")) from exc
         if response.status_code >= 400:
             raise LlmTranslationError(
-                f"OpenAI API returned {response.status_code}: {response.text[:400]}"
+                tr(
+                    "errors.translation.http_failure",
+                    status=response.status_code,
+                    body=response.text[:400],
+                )
             )
         try:
             body = response.json()
         except ValueError as exc:
-            raise LlmTranslationError("Invalid JSON payload from OpenAI API") from exc
+            raise LlmTranslationError(tr("errors.translation.json_invalid")) from exc
         try:
             return str(body["choices"][0]["message"]["content"]).strip()
         except (KeyError, IndexError, TypeError) as exc:
-            raise LlmTranslationError("OpenAI response is missing text content") from exc
+            raise LlmTranslationError(tr("errors.translation.response_missing_text")) from exc
 
 
 def build_combined_text(regions: Sequence[OcrRegion]) -> str:
@@ -170,19 +175,21 @@ def parse_translation_response(content: str) -> List[TranslationResult]:
     try:
         payload = json.loads(json_block)
     except json.JSONDecodeError as exc:
-        raise LlmTranslationError("Unable to parse translation JSON from LLM response") from exc
+        raise LlmTranslationError(tr("errors.translation.response_parse_failure")) from exc
     if not isinstance(payload, list):
-        raise LlmTranslationError("Translation payload must be a JSON array")
+        raise LlmTranslationError(tr("errors.translation.payload_not_array"))
     results: List[TranslationResult] = []
     for entry in payload:
         if not isinstance(entry, dict):
-            raise LlmTranslationError("Every translation entry must be an object")
+            raise LlmTranslationError(tr("errors.translation.entry_not_object"))
         try:
             box_id = int(entry["box_id"])
             translation = str(entry["translation"]).strip()
             notes = str(entry.get("notes", "")).strip()
         except (KeyError, ValueError, TypeError) as exc:
-            raise LlmTranslationError("Translation entries must include 'box_id' and 'translation'") from exc
+            raise LlmTranslationError(
+                tr("errors.translation.entry_missing_fields")
+            ) from exc
         results.append(TranslationResult(box_id=box_id, translation=translation, notes=notes))
     return results
 
@@ -190,7 +197,7 @@ def parse_translation_response(content: str) -> List[TranslationResult]:
 def extract_json_block(text: str) -> str:
     stripped = text.strip()
     if not stripped:
-        raise LlmTranslationError("Empty LLM response")
+        raise LlmTranslationError(tr("errors.translation.empty_response"))
     # Attempt direct parse first
     if _looks_like_json(stripped):
         return stripped
@@ -206,7 +213,7 @@ def extract_json_block(text: str) -> str:
         candidate = stripped[start : end + 1]
         if _looks_like_json(candidate):
             return candidate
-    raise LlmTranslationError("No JSON array found in LLM response")
+    raise LlmTranslationError(tr("errors.translation.no_json_array"))
 
 
 def _looks_like_json(candidate: str) -> bool:

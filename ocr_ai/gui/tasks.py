@@ -9,6 +9,8 @@ from ocr_ai.llm_translation import LlmTranslator
 from ocr_ai.ocr_engine import OcrRegion, build_readers, run_ocr_detailed
 from ocr_ai.runtime import normalize_lang_code, should_use_gpu
 
+from .i18n.localizer import tr
+
 
 @dataclass
 class OcrPayload:
@@ -31,15 +33,15 @@ def perform_ocr_task(
 ) -> OcrPayload:
     progress = progress_callback or (lambda _msg: None)
     print(f"[GUI] Starting OCR task for {image_path}", flush=True)
-    progress("Caricamento modelli EasyOCR…")
+    progress(tr("progress.ocr.loading"))
     use_gpu = should_use_gpu(force_cpu)
     print(f"[GUI] OCR will use GPU: {use_gpu}; languages: {lang_codes}", flush=True)
     readers = build_readers(lang_codes, use_gpu)
     print(f"[GUI] OCR readers ready ({len(readers)} bundle/s)", flush=True)
-    progress("Esecuzione OCR…")
+    progress(tr("progress.ocr.running"))
     regions = run_ocr_detailed(readers, image_path, paragraph=paragraph_mode)
     combined = "\n".join(region.text for region in regions)
-    progress("OCR completato")
+    progress(tr("progress.ocr.done"))
     print("[GUI] OCR task completed", flush=True)
     return OcrPayload(regions=regions, combined_text=combined)
 
@@ -56,11 +58,11 @@ def perform_translation_task(
     if not regions:
         return TranslationPayload([], "")
     if not api_key or not api_key.strip():
-        raise ValueError("OpenAI API key is required for translation")
+        raise ValueError(tr("dialogs.missing_api_key.body"))
     key = api_key.strip()
     progress = progress_callback or (lambda _msg: None)
     print("[GUI] Starting translation task", flush=True)
-    progress("Preparing translation context...")
+    progress(tr("progress.translation.preparing"))
     normalized_source = normalize_lang_code(source_lang)
     normalized_target = normalize_lang_code(target_lang)
     translator = LlmTranslator(
@@ -84,6 +86,6 @@ def perform_translation_task(
         note = notes_map.get(idx)
         combined_segments.append(f"{translated} # {note}" if note else translated)
     combined_text = "\n".join(combined_segments)
-    progress("Translation completed")
+    progress(tr("progress.translation.done"))
     print("[GUI] Translation task completed", flush=True)
     return TranslationPayload(overlay_texts=overlay_texts, combined_text=combined_text)
