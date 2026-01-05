@@ -1,7 +1,8 @@
 """Canvas widget that renders OCR overlays and supports zooming."""
 from __future__ import annotations
 
-from typing import Sequence
+from pathlib import Path
+from typing import List, Sequence
 
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QPolygonF, QTextDocument, QTextOption
@@ -25,6 +26,15 @@ class ImageCanvas(QLabel):
         self._zoom = 1.0
         self._min_zoom = 0.25
         self._max_zoom = 4.0
+        self._text_color = QColor(Qt.white)
+        self._text_color.setAlpha(255)
+        base_fill = QColor(30, 136, 229)
+        base_fill.setAlpha(90)
+        self._fill_color = base_fill
+        self._border_color = QColor(base_fill)
+        self._border_color.setAlpha(255)
+        self._regions_cache: List[OcrRegion] = []
+        self._overlay_cache: List[str] | None = None
 
     def set_image(self, pixmap: QPixmap) -> None:
         self._base_pixmap = pixmap
@@ -36,31 +46,33 @@ class ImageCanvas(QLabel):
     def show_regions(self, regions: Sequence[OcrRegion], overlay_texts: Sequence[str] | None = None) -> None:
         if not self._base_pixmap:
             return
-        pixmap = self._base_pixmap.copy()
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        for idx, region in enumerate(regions):
-            if overlay_texts is not None and idx < len(overlay_texts):
-                text = overlay_texts[idx]
-            else:
-                text = region.text
-            polygon = QPolygonF([QPointF(x, y) for x, y in region.bbox])
-            pen = QPen(QColor(30, 136, 229))
-            pen.setWidth(3)
-            painter.setPen(pen)
-            painter.setBrush(QColor(30, 136, 229, 90))
-            painter.drawPolygon(polygon)
-            painter.setPen(Qt.white)
-            fitted_font = self._font_for_rect(polygon.boundingRect(), text)
-            painter.setFont(fitted_font)
-            painter.drawText(
-                polygon.boundingRect(),
-                Qt.AlignCenter | Qt.TextWordWrap,
-                text,
-            )
-        painter.end()
-        self._annotated_pixmap = pixmap
-        self._update_scaled()
+        self._regions_cache = list(regions)
+        self._overlay_cache = list(overlay_texts) if overlay_texts is not None else None
+        self._draw_regions()
+
+    def refresh_overlays(self) -> None:
+        if not self._regions_cache:
+            self.clear_overlays()
+            return
+        self._draw_regions()
+
+    def set_overlay_style(
+        self,
+        *,
+        text_color: QColor | None = None,
+        fill_color: QColor | None = None,
+    ) -> None:
+        changed = False
+        if text_color is not None and text_color.isValid():
+            self._text_color = QColor(text_color)
+            changed = True
+        if fill_color is not None and fill_color.isValid():
+            self._fill_color = QColor(fill_color)
+            self._border_color = QColor(self._fill_color)
+            self._border_color.setAlpha(255)
+            changed = True
+        if changed:
+            self.refresh_overlays()
 
     def set_zoom(self, zoom: float) -> None:
         if not self._base_pixmap:
@@ -117,6 +129,45 @@ class ImageCanvas(QLabel):
         else:
             self._annotated_pixmap = None
             self.clear()
+        self._regions_cache = []
+        self._overlay_cache = None
+
+    def export_view(self, destination: Path) -> bool:
+        pixmap = self._annotated_pixmap or self._base_pixmap
+        if not pixmap:
+            return False
+        return pixmap.save(str(destination))
+
+    def _draw_regions(self) -> None:
+        if not self._base_pixmap:
+            return
+        pixmap = self._base_pixmap.copy()
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        border_pen = QPen(self._border_color)
+        border_pen.setWidth(3)
+        text_pen = QPen(self._text_color)
+        fill_color = QColor(self._fill_color if self._fill_color.isValid() else self._border_color)
+        for idx, region in enumerate(self._regions_cache):
+            if self._overlay_cache is not None and idx < len(self._overlay_cache):
+                text = self._overlay_cache[idx]
+            else:
+                text = region.text
+            polygon = QPolygonF([QPointF(x, y) for x, y in region.bbox])
+            painter.setPen(border_pen)
+            painter.setBrush(fill_color)
+            painter.drawPolygon(polygon)
+            painter.setPen(text_pen)
+            fitted_font = self._font_for_rect(polygon.boundingRect(), text)
+            painter.setFont(fitted_font)
+            painter.drawText(
+                polygon.boundingRect(),
+                Qt.AlignCenter | Qt.TextWordWrap,
+                text,
+            )
+        painter.end()
+        self._annotated_pixmap = pixmap
+        self._update_scaled()
 
     def _font_for_rect(self, rect, text: str) -> QFont:
         text = text.strip() or "?"

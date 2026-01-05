@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import List
 
 from PySide6.QtCore import QThread, QTimer, Qt
-from PySide6.QtGui import QCloseEvent, QPixmap
+from PySide6.QtGui import QColor, QCloseEvent, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -72,7 +73,16 @@ class MainWindow(QMainWindow):
         self.overlays_visible = True
         self._ocr_ready = False
         self._is_busy = False
+        self._translation_overlay_enabled = True
+        self._font_color = QColor(Qt.white)
+        self._font_color.setAlpha(255)
+        self._fill_color = QColor(30, 136, 229)
+        self._fill_color.setAlpha(90)
         self._build_ui()
+        self.image_canvas.set_overlay_style(
+            text_color=self._font_color,
+            fill_color=self._fill_color,
+        )
         self.image_canvas.clear()
         self._update_panel_states()
 
@@ -92,7 +102,7 @@ class MainWindow(QMainWindow):
         container = QWidget()
         layout = QVBoxLayout(container)
 
-        self.open_button = QPushButton("Apri immagine…")
+        self.open_button = QPushButton("Apri immagine...")
         self.open_button.clicked.connect(self.open_image)
         layout.addWidget(self.open_button)
 
@@ -113,6 +123,10 @@ class MainWindow(QMainWindow):
 
         self.translation_group = self._build_translation_group()
         layout.addWidget(self.translation_group)
+
+        self.export_image_btn = QPushButton("Esporta immagine annotata...")
+        self.export_image_btn.clicked.connect(self._export_canvas_snapshot)
+        layout.addWidget(self.export_image_btn)
 
         layout.addStretch(1)
         return container
@@ -141,6 +155,16 @@ class MainWindow(QMainWindow):
         self.toggle_overlays_btn.setEnabled(False)
         self.toggle_overlays_btn.clicked.connect(self._toggle_overlays)
         form.addRow(self.toggle_overlays_btn)
+
+        self.font_color_btn = QPushButton("Colore testo")
+        self.font_color_btn.clicked.connect(self._choose_font_color)
+        form.addRow("Colore testo", self.font_color_btn)
+        self._update_color_button(self.font_color_btn, self._font_color)
+
+        self.fill_color_btn = QPushButton("Colore riempimento")
+        self.fill_color_btn.clicked.connect(self._choose_fill_color)
+        form.addRow("Riempimento riquadro", self.fill_color_btn)
+        self._update_color_button(self.fill_color_btn, self._fill_color)
 
         layout.addLayout(form)
 
@@ -174,6 +198,11 @@ class MainWindow(QMainWindow):
         self.translate_btn.setEnabled(False)
         self.translate_btn.clicked.connect(self.run_translation)
         form.addRow(self.translate_btn)
+
+        self.toggle_translation_btn = QPushButton("Mostra testo originale")
+        self.toggle_translation_btn.setEnabled(False)
+        self.toggle_translation_btn.clicked.connect(self._toggle_translation_mode)
+        form.addRow(self.toggle_translation_btn)
 
         layout.addLayout(form)
 
@@ -216,7 +245,7 @@ class MainWindow(QMainWindow):
             not self.allow_gpu.isChecked(),
             self.paragraph_mode.isChecked(),
             on_success=self._handle_ocr_success,
-            busy_message="OCR in corso…",
+            busy_message="OCR in corso...",
         )
 
     def run_translation(self) -> None:
@@ -244,7 +273,7 @@ class MainWindow(QMainWindow):
             include_image,
             image_for_prompt,
             on_success=self._handle_translation_success,
-            busy_message="Traduzione in corso…",
+            busy_message="Traduzione in corso...",
         )
 
     def _handle_ocr_success(self, payload: OcrPayload) -> None:
@@ -264,12 +293,17 @@ class MainWindow(QMainWindow):
         self.translation_text.setPlainText(payload.combined_text)
         if self.current_regions:
             self._overlay_texts = payload.overlay_texts
+            self._translation_overlay_enabled = True
             self._render_overlays()
+            if hasattr(self, "toggle_translation_btn"):
+                self.toggle_translation_btn.setEnabled(True)
+                self.toggle_translation_btn.setText("Mostra testo originale")
         self._update_panel_states()
 
     def _reset_ocr_outputs(self) -> None:
         self.current_regions = []
         self._overlay_texts = None
+        self._translation_overlay_enabled = True
         self.overlays_visible = True
         self._ocr_ready = False
         self.ocr_text.clear()
@@ -279,6 +313,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "toggle_overlays_btn"):
             self.toggle_overlays_btn.setEnabled(False)
             self.toggle_overlays_btn.setText("Nascondi riconoscimento")
+        if hasattr(self, "toggle_translation_btn"):
+            self.toggle_translation_btn.setEnabled(False)
+            self.toggle_translation_btn.setText("Mostra testo originale")
         self._update_panel_states()
 
     def _prepare_for_new_ocr_run(self) -> None:
@@ -286,11 +323,15 @@ class MainWindow(QMainWindow):
         self.translate_btn.setEnabled(False)
         self.image_canvas.clear_overlays()
         self._overlay_texts = None
+        self._translation_overlay_enabled = True
         self._ocr_ready = False
         self.overlays_visible = True
         if hasattr(self, "toggle_overlays_btn"):
             self.toggle_overlays_btn.setEnabled(False)
             self.toggle_overlays_btn.setText("Nascondi riconoscimento")
+        if hasattr(self, "toggle_translation_btn"):
+            self.toggle_translation_btn.setEnabled(False)
+            self.toggle_translation_btn.setText("Mostra testo originale")
         self._update_panel_states()
 
     def _start_task(self, fn, *args, on_success, busy_message: str) -> None:
@@ -350,6 +391,7 @@ class MainWindow(QMainWindow):
     def _update_panel_states(self) -> None:
         has_image = self.image_canvas.has_image()
         has_ready_ocr = bool(self.current_regions) and self._ocr_ready
+        has_translation = bool(self._overlay_texts)
 
         self.open_button.setEnabled(not self._is_busy)
         if hasattr(self, "zoom_slider"):
@@ -372,6 +414,18 @@ class MainWindow(QMainWindow):
         if btn is not None:
             btn.setEnabled(has_ready_ocr and not self._is_busy)
 
+        if hasattr(self, "toggle_translation_btn"):
+            self.toggle_translation_btn.setEnabled(
+                has_translation and has_ready_ocr and not self._is_busy
+            )
+
+        if hasattr(self, "font_color_btn"):
+            self.font_color_btn.setEnabled(has_image and not self._is_busy)
+        if hasattr(self, "fill_color_btn"):
+            self.fill_color_btn.setEnabled(has_image and not self._is_busy)
+        if hasattr(self, "export_image_btn"):
+            self.export_image_btn.setEnabled(has_image)
+
     def _render_overlays(self) -> None:
         btn = getattr(self, "toggle_overlays_btn", None)
         if btn is None:
@@ -386,7 +440,9 @@ class MainWindow(QMainWindow):
             btn.setText("Mostra riconoscimento")
             self.image_canvas.clear_overlays()
             return
-        payload = self._overlay_texts if self._overlay_texts else None
+        payload = None
+        if self._overlay_texts and self._translation_overlay_enabled:
+            payload = self._overlay_texts
         self.image_canvas.show_regions(self.current_regions, payload)
         btn.setText("Nascondi riconoscimento")
 
@@ -395,6 +451,78 @@ class MainWindow(QMainWindow):
             return
         self.overlays_visible = not self.overlays_visible
         self._render_overlays()
+
+    def _toggle_translation_mode(self) -> None:
+        if not self._overlay_texts:
+            return
+        self._translation_overlay_enabled = not self._translation_overlay_enabled
+        if self._translation_overlay_enabled:
+            self.toggle_translation_btn.setText("Mostra testo originale")
+        else:
+            self.toggle_translation_btn.setText("Mostra traduzione")
+        self._render_overlays()
+
+    def _choose_font_color(self) -> None:
+        color = QColorDialog.getColor(
+            self._font_color,
+            self,
+            "Scegli colore del testo",
+            QColorDialog.ShowAlphaChannel,
+        )
+        if not color.isValid():
+            return
+        self._font_color = color
+        self._update_color_button(self.font_color_btn, color)
+        self.image_canvas.set_overlay_style(text_color=color)
+        self._render_overlays()
+
+    def _choose_fill_color(self) -> None:
+        color = QColorDialog.getColor(
+            self._fill_color,
+            self,
+            "Scegli riempimento del riquadro",
+            QColorDialog.ShowAlphaChannel,
+        )
+        if not color.isValid():
+            return
+        self._fill_color = color
+        self.image_canvas.set_overlay_style(fill_color=color)
+        self._update_color_button(self.fill_color_btn, color)
+        self._render_overlays()
+
+    def _update_color_button(self, button: QPushButton, color: QColor) -> None:
+        contrast = self._contrast_color(color)
+        background = self._rgba_css(color)
+        button.setStyleSheet(
+            f"background-color: {background}; color: {contrast}; border: 1px solid #444;"
+        )
+
+    def _contrast_color(self, color: QColor) -> str:
+        if color.lightness() > 128:
+            return "#000000"
+        return "#ffffff"
+
+    def _rgba_css(self, color: QColor) -> str:
+        return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()/255:.2f})"
+
+    def _export_canvas_snapshot(self) -> None:
+        if not self.image_canvas.has_image():
+            QMessageBox.information(self, "Nessuna immagine", "Carica prima un'immagine da esportare")
+            return
+        default_dir = self.current_image.parent if self.current_image else Path.home()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Esporta immagine annotata",
+            str(default_dir / "annotated.png"),
+            "PNG (*.png);;JPEG (*.jpg *.jpeg)",
+        )
+        if not file_path:
+            return
+        success = self.image_canvas.export_view(Path(file_path))
+        if success:
+            QMessageBox.information(self, "Esportazione completata", f"File salvato in {file_path}")
+        else:
+            QMessageBox.warning(self, "Errore", "Impossibile salvare l'immagine annotata")
 
     def _handle_zoom_slider_change(self, value: int) -> None:
         self.zoom_value_label.setText(f"{value}%")
@@ -423,7 +551,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
         if any(thread.isRunning() for thread in self._threads):
             print("[GUI] Gracefully stopping worker threads before exit", flush=True)
-            self.status_label.setText("Interruzione in corso…")
+            self.status_label.setText("Interruzione in corso...")
             QApplication.setOverrideCursor(Qt.WaitCursor)
             for thread in self._threads:
                 if not thread.isRunning():
