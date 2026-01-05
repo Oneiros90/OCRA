@@ -5,10 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Sequence
 
+from ocr_ai.llm_translation import LlmTranslator
 from ocr_ai.ocr_engine import OcrRegion, build_readers, run_ocr_detailed
-from ocr_ai.runtime import normalize_lang_code, resolve_model_name, should_use_gpu
-from ocr_ai.text_utils import chunk_text
-from ocr_ai.translation import Translator
+from ocr_ai.runtime import normalize_lang_code, should_use_gpu
 
 
 @dataclass
@@ -49,34 +48,42 @@ def perform_translation_task(
     regions: Sequence[OcrRegion],
     source_lang: str,
     target_lang: str,
-    model_choice: str,
-    custom_model: str | None,
-    max_chars: int,
+    api_key: str,
+    attach_image: bool,
+    image_path: Path | None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> TranslationPayload:
     if not regions:
         return TranslationPayload([], "")
+    if not api_key or not api_key.strip():
+        raise ValueError("OpenAI API key is required for translation")
+    key = api_key.strip()
     progress = progress_callback or (lambda _msg: None)
     print("[GUI] Starting translation task", flush=True)
-    progress("Caricamento modello di traduzione…")
+    progress("Preparing translation context...")
     normalized_source = normalize_lang_code(source_lang)
     normalized_target = normalize_lang_code(target_lang)
-    model_name = resolve_model_name(model_choice, custom_model)
-    translator = Translator(model_name, target_lang=normalized_target)
+    translator = LlmTranslator(
+        api_key=key,
+        target_lang=normalized_target,
+        include_image=attach_image and image_path is not None,
+    )
+    results = translator.translate_regions(
+        regions=regions,
+        source_lang=normalized_source,
+        image_path=image_path if attach_image else None,
+        progress_callback=progress,
+    )
+    overlay_map = {item.box_id: item.translation for item in results}
+    notes_map = {item.box_id: item.notes for item in results if item.notes}
     overlay_texts: List[str] = []
     combined_segments: List[str] = []
-    total = len(regions)
-    for idx, region in enumerate(regions, start=1):
-        progress(f"Traduzione chunk {idx}/{total}…")
-        chunks = chunk_text(region.text, max_chars)
-        payload = chunks or [region.text]
-        translated_segments = translator.translate(payload, source_lang=normalized_source)
-        translated_text = " ".join(translated_segments).strip()
-        if not translated_text:
-            translated_text = region.text
-        overlay_texts.append(translated_text)
-        combined_segments.append(translated_text)
+    for idx, region in enumerate(regions):
+        translated = overlay_map.get(idx, region.text)
+        overlay_texts.append(translated)
+        note = notes_map.get(idx)
+        combined_segments.append(f"{translated} # {note}" if note else translated)
     combined_text = "\n".join(combined_segments)
-    progress("Traduzione completata")
+    progress("Translation completed")
     print("[GUI] Translation task completed", flush=True)
     return TranslationPayload(overlay_texts=overlay_texts, combined_text=combined_text)

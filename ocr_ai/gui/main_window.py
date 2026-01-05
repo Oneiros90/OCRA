@@ -23,13 +23,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
-    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
-from ocr_ai.constants import DEFAULT_MAX_CHARS, DEFAULT_TARGET_LANG, MODEL_PRESETS
+from ocr_ai.constants import DEFAULT_TARGET_LANG
 from ocr_ai.ocr_engine import OcrRegion
 
 from .tasks import OcrPayload, TranslationPayload, perform_ocr_task, perform_translation_task
@@ -163,18 +162,13 @@ class MainWindow(QMainWindow):
         self._populate_language_combo(self.target_lang_combo, default_code=DEFAULT_TARGET_LANG)
         form.addRow("Lingua destinazione", self.target_lang_combo)
 
-        self.model_choice = QComboBox()
-        self.model_choice.addItems(sorted(MODEL_PRESETS.keys()))
-        form.addRow("Preset modello", self.model_choice)
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setEchoMode(QLineEdit.Password)
+        self.api_key_input.setPlaceholderText("sk-...")
+        form.addRow("OpenAI API key", self.api_key_input)
 
-        self.custom_model = QLineEdit()
-        self.custom_model.setPlaceholderText("ID personalizzato Hugging Face")
-        form.addRow("Modello custom", self.custom_model)
-
-        self.max_chars = QSpinBox()
-        self.max_chars.setRange(100, 2000)
-        self.max_chars.setValue(DEFAULT_MAX_CHARS)
-        form.addRow("Max caratteri chunk", self.max_chars)
+        self.attach_image_checkbox = QCheckBox("Allega immagine per il contesto")
+        form.addRow("Contesto immagine", self.attach_image_checkbox)
 
         self.translate_btn = QPushButton("Traduci testo")
         self.translate_btn.setEnabled(False)
@@ -234,15 +228,21 @@ class MainWindow(QMainWindow):
         if not source or not target:
             QMessageBox.warning(self, "Lingue", "Specifica lingua documento e destinazione")
             return
+        api_key = self.api_key_input.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "API key mancante", "Inserisci una OpenAI API key valida")
+            return
+        include_image = self.attach_image_checkbox.isChecked()
+        image_for_prompt = self.current_image if include_image else None
         print("[GUI] run_translation invoked", flush=True)
         self._start_task(
             perform_translation_task,
             self.current_regions,
             source,
             target,
-            self.model_choice.currentText(),
-            self.custom_model.text().strip() or None,
-            self.max_chars.value(),
+            api_key,
+            include_image,
+            image_for_prompt,
             on_success=self._handle_translation_success,
             busy_message="Traduzione in corso…",
         )
