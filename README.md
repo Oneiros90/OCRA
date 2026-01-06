@@ -53,6 +53,11 @@ Highlights:
 - **Color + export** – dedicated pickers for text/fill colors (alpha supported) and a one-click export of the annotated image.
 - **Localization** – the UI auto-detects the system locale; English is the default and Italian is available when macOS/Windows is set to Italian.
 
+## Multi-Page Documents
+- Load PDFs directly; pages are rasterized through PyMuPDF with a 2× scale factor for crisp text. No extra dependencies beyond `pip install -r requirements.txt` are needed.
+- DjVu files rely on the DjVuLibre CLI (`ddjvu` and `djvused`). The Windows binaries are bundled under `ocr_ai/vendor/djvulibre`, so development environments and PyInstaller builds pick them up automatically. On macOS/Linux you can drop compatible binaries into the same folder (or install DjVuLibre system-wide) and the loader will reuse them.
+- When a document exposes multiple images, the GUI reveals a page selector above the zoom controls so you can decide which page to feed into OCR/translation. Switching pages automatically clears the previous OCR output to avoid mixing regions from different images.
+
 ## Localization
 All user-facing strings live under `ocr_ai/gui/i18n/translations`. Extend the app to new languages by dropping additional JSON files into that directory. Each key is shared by the CLI helpers, worker threads, and Qt widgets, so adding a locale instantly updates the entire experience.
 

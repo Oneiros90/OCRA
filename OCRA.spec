@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['ocr_gui.py'],
+    ['c:\\Users\\oneiros\\Projects\\ocra\\ocr_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('ocr_ai', 'ocr_ai')],
+    datas=[('C:\\Users\\oneiros\\Projects\\ocra\\ocr_ai', 'ocr_ai')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -41,10 +41,4 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     name='OCRA',
-)
-app = BUNDLE(
-    coll,
-    name='OCRA.app',
-    icon=None,
-    bundle_identifier=None,
 )

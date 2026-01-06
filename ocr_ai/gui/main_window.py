@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List
 
 from PySide6.QtCore import QThread, QTimer, Qt
-from PySide6.QtGui import QColor, QCloseEvent, QPixmap
+from PySide6.QtGui import QColor, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -30,6 +30,13 @@ from PySide6.QtWidgets import (
 )
 
 from ocr_ai.constants import DEFAULT_TARGET_LANG
+from ocr_ai.document_loader import (
+    DOCUMENT_EXTENSIONS,
+    DocumentLoadError,
+    DocumentLoadResult,
+    DocumentPage,
+    load_document,
+)
 from ocr_ai.ocr_engine import OcrRegion
 
 from .i18n.localizer import tr
@@ -79,6 +86,9 @@ class MainWindow(QMainWindow):
         self._font_color.setAlpha(255)
         self._fill_color = QColor(30, 136, 229)
         self._fill_color.setAlpha(90)
+        self._document_result: DocumentLoadResult | None = None
+        self._document_pages: list[DocumentPage] = []
+        self._current_page_index = 0
         self._build_ui()
         self.image_canvas.set_overlay_style(
             text_color=self._font_color,
@@ -106,6 +116,16 @@ class MainWindow(QMainWindow):
         self.open_button = QPushButton(tr("buttons.open_image"))
         self.open_button.clicked.connect(self.open_image)
         layout.addWidget(self.open_button)
+
+        page_row = QHBoxLayout()
+        self.page_selector_label = QLabel(tr("labels.page_selector"))
+        self.page_selector = QComboBox()
+        self.page_selector.currentIndexChanged.connect(self._handle_page_selection_change)
+        self.page_selector_label.setVisible(False)
+        self.page_selector.setVisible(False)
+        page_row.addWidget(self.page_selector_label)
+        page_row.addWidget(self.page_selector, 1)
+        layout.addLayout(page_row)
 
         zoom_row = QHBoxLayout()
         zoom_label = QLabel(tr("labels.zoom"))
@@ -217,21 +237,100 @@ class MainWindow(QMainWindow):
         return group
 
     def open_image(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(self, tr("dialogs.open_image.title"), str(Path.home()))
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("dialogs.open_image.title"),
+            str(Path.home()),
+            self._file_dialog_filter(),
+        )
         if not file_path:
             return
-        pixmap = QPixmap(file_path)
-        if pixmap.isNull():
+        try:
+            result = load_document(file_path)
+        except DocumentLoadError as exc:
             QMessageBox.warning(
                 self,
-                tr("dialogs.invalid_image.title"),
-                tr("dialogs.invalid_image.body"),
+                tr("dialogs.document_error.title"),
+                tr("dialogs.document_error.body", reason=str(exc)),
             )
             return
-        self.current_image = Path(file_path)
-        self.image_canvas.set_image(pixmap)
-        QTimer.singleShot(0, self._reset_zoom_to_fit)
+        self._apply_document_result(result)
+
+    def _apply_document_result(self, result: DocumentLoadResult) -> None:
+        self._dispose_document_result()
+        self._document_result = result
+        self._document_pages = result.pages
+        if not self._document_pages:
+            self._clear_document_state()
+            QMessageBox.warning(
+                self,
+                tr("dialogs.document_error.title"),
+                tr("dialogs.document_error.body", reason=tr("dialogs.document_error.empty")),
+            )
+            return
+        self._current_page_index = 0
+        self._refresh_page_selector()
+        self._show_page(self._current_page_index)
         self._reset_ocr_outputs()
+
+    def _refresh_page_selector(self) -> None:
+        selector = getattr(self, "page_selector", None)
+        label = getattr(self, "page_selector_label", None)
+        if selector is None or label is None:
+            return
+        has_multiple = len(self._document_pages) > 1
+        selector.blockSignals(True)
+        selector.clear()
+        label.setVisible(has_multiple)
+        selector.setVisible(has_multiple)
+        if has_multiple:
+            for page in self._document_pages:
+                selector.addItem(page.label)
+            selector.setCurrentIndex(self._current_page_index)
+        selector.blockSignals(False)
+
+    def _handle_page_selection_change(self, index: int) -> None:
+        if not self._document_pages or self._is_busy:
+            return
+        if index < 0 or index >= len(self._document_pages):
+            return
+        if index == self._current_page_index:
+            return
+        self._current_page_index = index
+        self._show_page(index)
+        self._reset_ocr_outputs()
+
+    def _show_page(self, index: int) -> None:
+        page = self._document_pages[index]
+        self.current_image = page.image_path
+        self.image_canvas.set_image(page.pixmap)
+        QTimer.singleShot(0, self._reset_zoom_to_fit)
+
+    def _file_dialog_filter(self) -> str:
+        label = tr("dialogs.open_image.filter")
+        patterns = " ".join(f"*{ext}" for ext in DOCUMENT_EXTENSIONS)
+        return f"{label} ({patterns})"
+
+    def _clear_document_state(self) -> None:
+        self._document_pages = []
+        self._current_page_index = 0
+        selector = getattr(self, "page_selector", None)
+        label = getattr(self, "page_selector_label", None)
+        if selector is not None:
+            selector.blockSignals(True)
+            selector.clear()
+            selector.blockSignals(False)
+            selector.setVisible(False)
+            selector.setEnabled(False)
+        if label is not None:
+            label.setVisible(False)
+            label.setEnabled(False)
+        self._dispose_document_result()
+
+    def _dispose_document_result(self) -> None:
+        if self._document_result is not None:
+            self._document_result.cleanup()
+            self._document_result = None
 
     def run_ocr(self) -> None:
         if not self.current_image:
@@ -454,6 +553,12 @@ class MainWindow(QMainWindow):
             self.fill_color_btn.setEnabled(has_image and not self._is_busy)
         if hasattr(self, "export_image_btn"):
             self.export_image_btn.setEnabled(has_image)
+        if hasattr(self, "page_selector"):
+            has_multiple = len(self._document_pages) > 1
+            enable_selector = has_multiple and has_image and not self._is_busy
+            self.page_selector.setEnabled(enable_selector)
+            if hasattr(self, "page_selector_label"):
+                self.page_selector_label.setEnabled(enable_selector)
 
     def _render_overlays(self) -> None:
         btn = getattr(self, "toggle_overlays_btn", None)
@@ -607,6 +712,7 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
             self.status_label.setText(tr("status.ready"))
         self._threads.clear()
+        self._dispose_document_result()
         super().closeEvent(event)
 
     def _cleanup_thread(self, thread: QThread) -> None:

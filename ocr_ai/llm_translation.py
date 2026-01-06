@@ -5,6 +5,7 @@ import base64
 import json
 import mimetypes
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Sequence
@@ -16,6 +17,10 @@ from .ocr_engine import OcrRegion
 
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_CONNECT_TIMEOUT = 30
+OPENAI_READ_TIMEOUT = 180
+OPENAI_MAX_RETRIES = 2
+OPENAI_RETRY_BACKOFF = 5.0
 SYSTEM_PROMPT = (
     "You are a diligent professional translator. Always respond with valid JSON and"
     " keep translations faithful to the source text while improving clarity."
@@ -80,10 +85,7 @@ class LlmTranslator:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        try:
-            response = requests.post(OPENAI_API_URL, headers=headers, json=payload, timeout=60)
-        except requests.RequestException as exc:  # pragma: no cover - network
-            raise LlmTranslationError(tr("errors.translation.network")) from exc
+        response = self._post_with_retries(headers, payload)
         if response.status_code >= 400:
             raise LlmTranslationError(
                 tr(
@@ -100,6 +102,25 @@ class LlmTranslator:
             return str(body["choices"][0]["message"]["content"]).strip()
         except (KeyError, IndexError, TypeError) as exc:
             raise LlmTranslationError(tr("errors.translation.response_missing_text")) from exc
+
+    def _post_with_retries(self, headers: dict[str, str], payload: dict[str, Any]) -> requests.Response:
+        last_exc: Exception | None = None
+        for attempt in range(OPENAI_MAX_RETRIES + 1):
+            try:
+                return requests.post(
+                    OPENAI_API_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=(OPENAI_CONNECT_TIMEOUT, OPENAI_READ_TIMEOUT),
+                )
+            except (requests.Timeout, requests.ConnectionError) as exc:  # pragma: no cover
+                last_exc = exc
+                if attempt == OPENAI_MAX_RETRIES:
+                    break
+                time.sleep(OPENAI_RETRY_BACKOFF * (attempt + 1))
+            except requests.RequestException as exc:  # pragma: no cover
+                raise LlmTranslationError(tr("errors.translation.network")) from exc
+        raise LlmTranslationError(tr("errors.translation.network")) from last_exc
 
 
 def build_combined_text(regions: Sequence[OcrRegion]) -> str:
