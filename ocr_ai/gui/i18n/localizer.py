@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import locale
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -22,13 +24,20 @@ class Localizer:
         self.set_locale(self._detect_locale())
 
     def _detect_locale(self) -> str:
+        platform_locale = self._locale_from_platform()
+        if platform_locale:
+            return platform_locale
         env_locale = self._locale_from_env()
         if env_locale:
             return env_locale
-        apple_locale = self._locale_from_defaults()
-        if apple_locale:
-            return apple_locale
         return self._fallback
+
+    def _locale_from_platform(self) -> str | None:
+        if sys.platform.startswith("win"):
+            return self._locale_from_windows()
+        if sys.platform == "darwin":
+            return self._locale_from_defaults() or self._locale_from_locale_module()
+        return self._locale_from_locale_module()
 
     def _locale_from_env(self) -> str | None:
         system_locale = (
@@ -58,6 +67,47 @@ class Localizer:
         if result.returncode != 0:
             return None
         return self._normalize_locale(result.stdout.strip())
+
+    def _locale_from_windows(self) -> str | None:
+        api_locale = self._locale_from_windows_api()
+        if api_locale:
+            return api_locale
+        return self._locale_from_locale_module()
+
+    def _locale_from_windows_api(self) -> str | None:
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+        except (ImportError, AttributeError, OSError):
+            return None
+
+        for attr in ("GetUserDefaultUILanguage", "GetSystemDefaultUILanguage"):
+            getter = getattr(kernel32, attr, None)
+            if getter is None:
+                continue
+            try:
+                lang_id = getter()
+            except OSError:
+                continue
+            match = locale.windows_locale.get(lang_id)
+            normalized = self._normalize_locale(match)
+            if normalized:
+                return normalized
+        return None
+
+    def _locale_from_locale_module(self) -> str | None:
+        language, _ = locale.getlocale()
+        if not language:
+            try:
+                fromlocale = locale.getdefaultlocale()[0]
+            except ValueError:
+                fromlocale = None
+            language = fromlocale
+        normalized = self._normalize_locale(language)
+        if normalized in {"c", "posix"}:
+            return None
+        return normalized
 
     def _normalize_locale(self, value: str | None) -> str | None:
         if not value:

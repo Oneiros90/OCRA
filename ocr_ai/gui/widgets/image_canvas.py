@@ -16,9 +16,8 @@ class ImageCanvas(QLabel):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(500, 400)
-        self.setStyleSheet("background-color: #0f1115; border: 1px solid #1f232b;")
         self._base_pixmap: QPixmap | None = None
         self._annotated_pixmap: QPixmap | None = None
         self._font_size = 18
@@ -26,7 +25,7 @@ class ImageCanvas(QLabel):
         self._zoom = 1.0
         self._min_zoom = 0.25
         self._max_zoom = 4.0
-        self._text_color = QColor(Qt.white)
+        self._text_color = QColor(Qt.GlobalColor.white)
         self._text_color.setAlpha(255)
         base_fill = QColor(30, 136, 229)
         base_fill.setAlpha(90)
@@ -102,7 +101,7 @@ class ImageCanvas(QLabel):
         return self._base_pixmap is not None
 
     def wheelEvent(self, event) -> None:  # type: ignore[override]
-        if event.modifiers() & Qt.ControlModifier:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             delta = event.angleDelta().y()
             step = 1.1 if delta > 0 else 0.9
             self.set_zoom(self._zoom * step)
@@ -118,7 +117,12 @@ class ImageCanvas(QLabel):
             return
         target_w = max(1, int(pixmap.width() * self._zoom))
         target_h = max(1, int(pixmap.height() * self._zoom))
-        scaled = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled = pixmap.scaled(
+            target_w,
+            target_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         self.setPixmap(scaled)
         self.resize(scaled.size())
 
@@ -143,7 +147,7 @@ class ImageCanvas(QLabel):
             return
         pixmap = self._base_pixmap.copy()
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         border_pen = QPen(self._border_color)
         border_pen.setWidth(3)
         text_pen = QPen(self._text_color)
@@ -162,7 +166,7 @@ class ImageCanvas(QLabel):
             painter.setFont(fitted_font)
             painter.drawText(
                 polygon.boundingRect(),
-                Qt.AlignCenter | Qt.TextWordWrap,
+                Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
                 text,
             )
         painter.end()
@@ -175,8 +179,8 @@ class ImageCanvas(QLabel):
         max_dim = max(12, min(rect.width(), rect.height(), 400))
         max_size = int(max(self._font_size * 3, max_dim))
         option = QTextOption()
-        option.setAlignment(Qt.AlignCenter)
-        option.setWrapMode(QTextOption.WordWrap)
+        option.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        option.setWrapMode(QTextOption.WrapMode.WordWrap)
         doc = QTextDocument()
         doc.setDefaultTextOption(option)
         doc.setPlainText(text)

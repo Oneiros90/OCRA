@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
         self.image_canvas.zoomChanged.connect(self._handle_canvas_zoom_change)
         self.image_scroll = QScrollArea()
         self.image_scroll.setWidgetResizable(False)
-        self.image_scroll.setAlignment(Qt.AlignCenter)
+        self.image_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_scroll.setWidget(self.image_canvas)
         self.status_label = QLabel(tr("status.ready"))
         self.statusBar().addPermanentWidget(self.status_label)
@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
         self._ocr_ready = False
         self._is_busy = False
         self._translation_overlay_enabled = True
-        self._font_color = QColor(Qt.white)
+        self._font_color = QColor(Qt.GlobalColor.white)
         self._font_color.setAlpha(255)
         self._fill_color = QColor(30, 136, 229)
         self._fill_color.setAlpha(90)
@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
 
         zoom_row = QHBoxLayout()
         zoom_label = QLabel(tr("labels.zoom"))
-        self.zoom_slider = QSlider(Qt.Horizontal)
+        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self.zoom_slider.setRange(25, 400)
         self.zoom_slider.setValue(100)
         self.zoom_slider.valueChanged.connect(self._handle_zoom_slider_change)
@@ -188,7 +188,7 @@ class MainWindow(QMainWindow):
         form.addRow(tr("labels.target_language"), self.target_lang_combo)
 
         self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.Password)
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_input.setPlaceholderText(tr("placeholders.api_key"))
         form.addRow(tr("labels.api_key"), self.api_key_input)
 
@@ -496,7 +496,7 @@ class MainWindow(QMainWindow):
             self._font_color,
             self,
             tr("dialogs.font_color.title"),
-            QColorDialog.ShowAlphaChannel,
+            QColorDialog.ColorDialogOption.ShowAlphaChannel,
         )
         if not color.isValid():
             return
@@ -510,7 +510,7 @@ class MainWindow(QMainWindow):
             self._fill_color,
             self,
             tr("dialogs.fill_color.title"),
-            QColorDialog.ShowAlphaChannel,
+            QColorDialog.ColorDialogOption.ShowAlphaChannel,
         )
         if not color.isValid():
             return
@@ -594,7 +594,7 @@ class MainWindow(QMainWindow):
         if any(thread.isRunning() for thread in self._threads):
             print("[GUI] Gracefully stopping worker threads before exit", flush=True)
             self.status_label.setText(tr("status.interrupting"))
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             for thread in self._threads:
                 if not thread.isRunning():
                     continue
